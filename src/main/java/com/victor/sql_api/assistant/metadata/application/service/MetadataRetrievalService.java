@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
 @Service
 public class MetadataRetrievalService {
 
-    private static final Pattern NON_ALNUM = Pattern.compile("[^a-z0-9_ ]");
+    private static final Pattern NON_ALNUM = Pattern.compile("[^a-z0-9 ]");
     private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
 
     private static final Set<String> STOPWORDS = Set.of(
@@ -34,6 +34,7 @@ public class MetadataRetrievalService {
     private static final double MATCH_WORD = 0.80;       // whole word
     private static final double MATCH_PREFIX = 0.50;     // word startsWith(token)
     private static final double MATCH_SUBSTRING = 0.20;  // fallback
+    private static final double MATCH_FUZZY = 0.35;      // typo tolerance (edit distance)
 
     // Field weights (balanced: name > semantic role/comment; column slightly higher than table)
     private static final double W_TABLE_NAME = 3.4;
@@ -397,7 +398,82 @@ public class MetadataRetrievalService {
         if (token.length() >= 4 && normalizedField.contains(token)) {
             return MatchType.SUBSTRING;
         }
+        if (token.length() >= 5 && hasNearWord(token, fieldWords)) {
+            return MatchType.FUZZY;
+        }
         return null;
+    }
+
+    private boolean hasNearWord(String token, Set<String> fieldWords) {
+        for (String word : fieldWords) {
+            if (word == null || word.isBlank()) {
+                continue;
+            }
+            if (Math.abs(word.length() - token.length()) > 1) {
+                continue;
+            }
+            if (isEditDistanceAtMostOne(token, word)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isEditDistanceAtMostOne(String a, String b) {
+        if (a.equals(b)) {
+            return true;
+        }
+        int la = a.length();
+        int lb = b.length();
+        if (Math.abs(la - lb) > 1) {
+            return false;
+        }
+
+        if (la == lb) {
+            int mismatchCount = 0;
+            int first = -1;
+            int second = -1;
+            for (int i = 0; i < la; i++) {
+                if (a.charAt(i) == b.charAt(i)) {
+                    continue;
+                }
+                mismatchCount++;
+                if (mismatchCount > 2) {
+                    return false;
+                }
+                if (first < 0) {
+                    first = i;
+                } else {
+                    second = i;
+                }
+            }
+            if (mismatchCount == 1) {
+                return true;
+            }
+            if (mismatchCount == 2 && second == first + 1) {
+                return a.charAt(first) == b.charAt(second) && a.charAt(second) == b.charAt(first);
+            }
+            return false;
+        }
+
+        String shorter = la < lb ? a : b;
+        String longer = la < lb ? b : a;
+        int i = 0;
+        int j = 0;
+        boolean skipped = false;
+        while (i < shorter.length() && j < longer.length()) {
+            if (shorter.charAt(i) == longer.charAt(j)) {
+                i++;
+                j++;
+                continue;
+            }
+            if (skipped) {
+                return false;
+            }
+            skipped = true;
+            j++;
+        }
+        return true;
     }
 
     private List<TableCandidate> selectTables(
@@ -996,7 +1072,8 @@ public class MetadataRetrievalService {
         EXACT(MATCH_EXACT),
         WORD(MATCH_WORD),
         PREFIX(MATCH_PREFIX),
-        SUBSTRING(MATCH_SUBSTRING);
+        SUBSTRING(MATCH_SUBSTRING),
+        FUZZY(MATCH_FUZZY);
 
         private final double strength;
 

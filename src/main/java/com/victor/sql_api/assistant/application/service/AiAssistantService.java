@@ -22,10 +22,12 @@ public class AiAssistantService {
             Regras obrigatórias:
             - Responda somente com SQL puro (sem markdown, sem explicação).
             - Gere apenas uma consulta SQL.
-            - Priorize SELECT.
+            - Crie apenas SELECT.
+            - Priorize traser os descritores das tabelas, não somente os IDs.
             - Use apenas tabelas/colunas presentes no contexto de metadata.
             - Se houver caminhos de relacionamento, prefira joins coerentes por eles.
             - Se o pedido estiver ambíguo, escolha a interpretação mais provável com base no contexto.
+            - Caso não hajam tabelas relevantes, retorne: "Não foi possível gerar SQL com base na solicitação e no contexto fornecidos."
             """;
 
     private final MetadataRetrievalService metadataRetrievalService;
