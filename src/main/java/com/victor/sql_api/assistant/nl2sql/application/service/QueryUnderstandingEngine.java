@@ -7,3 +7,5 @@ public interface QueryUnderstandingEngine {
     boolean isAvailable();
     QueryUnderstanding analyze(String question);
 }
+
+

@@ -7,3 +7,5 @@ public class FeatureNotImplementedException extends ApiException {
         super(code, message, HttpStatus.NOT_IMPLEMENTED);
     }
 }
+
+

@@ -1,8 +1,8 @@
-package com.victor.sql_api.assistant.askdatalike.application.service;
+package com.victor.sql_api.assistant.retrieval.providers.askdatalike.application.service;
 
-import com.victor.sql_api.assistant.metadata.application.model.RetrievalConstraints;
-import com.victor.sql_api.assistant.metadata.application.model.RetrievalRequest;
-import com.victor.sql_api.assistant.metadata.domain.model.*;
+import com.victor.sql_api.assistant.retrieval.model.application.RetrievalConstraints;
+import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
+import com.victor.sql_api.assistant.retrieval.model.domain.*;
 import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,6 +14,10 @@ import java.util.stream.Collectors;
 
 @Service
 public class AskDataLikeMetadataRetrievalService {
+    /*
+     * Source of truth for retrieval:
+     * this service queries eqt_metadata tables and ranks relevant tables/columns/relationships.
+     */
     private static final Set<String> STOPWORDS = Set.of(
             "a", "o", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "para", "por", "com",
             "um", "uma", "meu", "minha", "gere", "trazer", "calcule", "tambem", "quero", "que", "mostre"
@@ -571,3 +575,5 @@ public class AskDataLikeMetadataRetrievalService {
     ) {
     }
 }
+
+

@@ -3,13 +3,13 @@ package com.victor.sql_api.assistant.infrastructure.llm;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "app.ai.lmstudio")
-public record OllamaProperties(
+public record LmStudioProperties(
         String baseUrl,
         String model,
         Double temperature,
         Integer timeoutSeconds
 ) {
-    public OllamaProperties {
+    public LmStudioProperties {
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = "http://localhost:1234";
         }
@@ -24,3 +24,5 @@ public record OllamaProperties(
         }
     }
 }
+
+

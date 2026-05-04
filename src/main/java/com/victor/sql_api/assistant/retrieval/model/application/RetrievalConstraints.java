@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.metadata.application.model;
+package com.victor.sql_api.assistant.retrieval.model.application;
 
 public record RetrievalConstraints(
         int maxTables,
@@ -10,3 +10,5 @@ public record RetrievalConstraints(
         return new RetrievalConstraints(4, 8, 8, 24);
     }
 }
+
+

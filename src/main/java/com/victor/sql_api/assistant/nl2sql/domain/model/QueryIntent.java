@@ -7,3 +7,5 @@ public enum QueryIntent {
     TREND,
     UNKNOWN
 }
+
+

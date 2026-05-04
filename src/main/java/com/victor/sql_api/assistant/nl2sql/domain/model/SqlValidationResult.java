@@ -10,3 +10,5 @@ public record SqlValidationResult(
         List<String> detectedColumns
 ) {
 }
+
+

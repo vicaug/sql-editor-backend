@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.metadata.domain.model;
+package com.victor.sql_api.assistant.retrieval.model.domain;
 
 import java.util.List;
 
@@ -11,3 +11,5 @@ public record MetadataContext(
         RetrievalDiagnostics diagnostics
 ) {
 }
+
+

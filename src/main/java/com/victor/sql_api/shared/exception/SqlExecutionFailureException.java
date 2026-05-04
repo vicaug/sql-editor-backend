@@ -7,3 +7,5 @@ public class SqlExecutionFailureException extends ApiException {
         super("SQL_EXECUTION_ERROR", message, HttpStatus.BAD_REQUEST);
     }
 }
+
+

@@ -1,6 +1,6 @@
 package com.victor.sql_api.assistant.nl2sql.domain.model;
 
-import com.victor.sql_api.assistant.metadata.domain.model.MetadataContext;
+import com.victor.sql_api.assistant.retrieval.model.domain.MetadataContext;
 
 public record Nl2SqlContext(
         String originalQuestion,
@@ -13,3 +13,5 @@ public record Nl2SqlContext(
         String promptContext
 ) {
 }
+
+

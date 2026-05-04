@@ -32,3 +32,5 @@ public class SqlExecutionProperties {
         this.defaultPageSize = defaultPageSize;
     }
 }
+
+

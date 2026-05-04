@@ -2,9 +2,9 @@ package com.victor.sql_api.assistant.presentation.controller;
 
 import com.victor.sql_api.assistant.application.model.AiAssistantResult;
 import com.victor.sql_api.assistant.application.service.AiAssistantRouterService;
-import com.victor.sql_api.assistant.application.service.MetadataContextRouterService;
-import com.victor.sql_api.assistant.metadata.application.model.RetrievalConstraints;
-import com.victor.sql_api.assistant.metadata.application.model.RetrievalRequest;
+import com.victor.sql_api.assistant.context.application.service.MetadataContextProviderRouter;
+import com.victor.sql_api.assistant.retrieval.model.application.RetrievalConstraints;
+import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
 import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
 import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
 import com.victor.sql_api.assistant.nl2sql.presentation.model.SqlValidationRequest;
@@ -24,12 +24,12 @@ import java.util.UUID;
 public class AiAssistantController {
 
     private final AiAssistantRouterService aiAssistantRouterService;
-    private final MetadataContextRouterService metadataContextRouterService;
+    private final MetadataContextProviderRouter metadataContextRouterService;
     private final SqlGuardService sqlGuardService;
 
     public AiAssistantController(
             AiAssistantRouterService aiAssistantRouterService,
-            MetadataContextRouterService metadataContextRouterService,
+            MetadataContextProviderRouter metadataContextRouterService,
             SqlGuardService sqlGuardService
     ) {
         this.aiAssistantRouterService = aiAssistantRouterService;
@@ -37,8 +37,12 @@ public class AiAssistantController {
         this.sqlGuardService = sqlGuardService;
     }
 
-    @PostMapping("/suggest")
-    public ResponseEntity<ApiResponse<AiAssistantResult>> suggest(@RequestBody Map<String, Object> request) {
+    @PostMapping("/text-to-sql-query")
+    public ResponseEntity<ApiResponse<AiAssistantResult>> textToSqlQuery(@RequestBody Map<String, Object> request) {
+        return buildSuggestionResponse(request);
+    }
+
+    private ResponseEntity<ApiResponse<AiAssistantResult>> buildSuggestionResponse(Map<String, Object> request) {
         String prompt = request == null ? null : asString(request.get("prompt"));
         if (prompt == null || prompt.isBlank()) {
             prompt = request == null ? null : asString(request.get("question"));
@@ -97,3 +101,5 @@ public class AiAssistantController {
         return Boolean.parseBoolean(text);
     }
 }
+
+

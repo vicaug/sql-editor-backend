@@ -18,15 +18,15 @@ import java.time.Duration;
 import java.util.Map;
 
 @Component
-@EnableConfigurationProperties(OllamaProperties.class)
-public class OllamaTextGenerator implements AiTextGenerator {
-    private static final Logger log = LoggerFactory.getLogger(OllamaTextGenerator.class);
+@EnableConfigurationProperties(LmStudioProperties.class)
+public class LmStudioTextGenerator implements AiTextGenerator {
+    private static final Logger log = LoggerFactory.getLogger(LmStudioTextGenerator.class);
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
-    private final OllamaProperties properties;
+    private final LmStudioProperties properties;
 
-    public OllamaTextGenerator(ObjectMapper objectMapper, OllamaProperties properties) {
+    public LmStudioTextGenerator(ObjectMapper objectMapper, LmStudioProperties properties) {
         this.objectMapper = objectMapper;
         this.properties = properties;
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
@@ -92,3 +92,5 @@ public class OllamaTextGenerator implements AiTextGenerator {
         }
     }
 }
+
+

@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.metadata.application.model;
+package com.victor.sql_api.assistant.retrieval.model.application;
 
 public record RetrievalRequest(
         String question,
@@ -9,3 +9,5 @@ public record RetrievalRequest(
         return constraints == null ? RetrievalConstraints.defaults() : constraints;
     }
 }
+
+

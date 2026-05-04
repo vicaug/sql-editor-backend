@@ -5,3 +5,5 @@ public interface AiTextGenerator {
 
     String generate(String systemPrompt, String userPrompt);
 }
+
+

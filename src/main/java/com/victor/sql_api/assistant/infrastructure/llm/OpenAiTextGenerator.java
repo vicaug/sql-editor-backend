@@ -27,3 +27,5 @@ public class OpenAiTextGenerator implements AiTextGenerator {
                 .content();
     }
 }
+
+

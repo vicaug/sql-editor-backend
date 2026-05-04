@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.metadata.domain.model;
+package com.victor.sql_api.assistant.retrieval.model.domain;
 
 public record RelevantTable(
         String schemaName,
@@ -7,3 +7,5 @@ public record RelevantTable(
         double score
 ) {
 }
+
+

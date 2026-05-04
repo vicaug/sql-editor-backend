@@ -2,11 +2,12 @@ package com.victor.sql_api.assistant.application.service;
 
 import com.victor.sql_api.assistant.application.model.AiAssistantResult;
 import com.victor.sql_api.assistant.application.port.AiTextGenerator;
-import com.victor.sql_api.assistant.metadata.application.model.RetrievalRequest;
-import com.victor.sql_api.assistant.metadata.domain.model.MetadataContext;
-import com.victor.sql_api.assistant.metadata.domain.model.RelevantColumn;
-import com.victor.sql_api.assistant.metadata.domain.model.RelevantRelationship;
-import com.victor.sql_api.assistant.metadata.domain.model.RelevantTable;
+import com.victor.sql_api.assistant.context.application.service.MetadataContextProviderRouter;
+import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
+import com.victor.sql_api.assistant.retrieval.model.domain.MetadataContext;
+import com.victor.sql_api.assistant.retrieval.model.domain.RelevantColumn;
+import com.victor.sql_api.assistant.retrieval.model.domain.RelevantRelationship;
+import com.victor.sql_api.assistant.retrieval.model.domain.RelevantTable;
 import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
 import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
 import com.victor.sql_api.assistant.nl2sql.domain.model.SqlValidationResult;
@@ -19,6 +20,12 @@ import java.util.List;
 import java.util.Locale;
 
 abstract class BaseAiSuggestionService implements AiSuggestionService {
+    /*
+     * Source of truth for text-to-sql flow:
+     * 1) Build NL2SQL context via metadata context provider router
+     * 2) Call LLM text generator with strict SQL prompt
+     * 3) Optionally validate generated SQL with SqlGuardService
+     */
     private static final Logger log = LoggerFactory.getLogger(BaseAiSuggestionService.class);
     private static final String SYSTEM_PROMPT = """
             Você é um assistente de SQL para PostgreSQL.
@@ -33,12 +40,12 @@ abstract class BaseAiSuggestionService implements AiSuggestionService {
             - Caso não hajam tabelas relevantes, retorne: "Não foi possível gerar SQL com base na solicitação e no contexto fornecidos."
             """;
 
-    private final MetadataContextRouterService metadataContextRouterService;
+    private final MetadataContextProviderRouter metadataContextRouterService;
     private final AiTextGenerator aiTextGenerator;
     private final SqlGuardService sqlGuardService;
 
     protected BaseAiSuggestionService(
-            MetadataContextRouterService metadataContextRouterService,
+            MetadataContextProviderRouter metadataContextRouterService,
             AiTextGenerator aiTextGenerator,
             SqlGuardService sqlGuardService
     ) {
@@ -221,3 +228,5 @@ abstract class BaseAiSuggestionService implements AiSuggestionService {
         return value.trim();
     }
 }
+
+

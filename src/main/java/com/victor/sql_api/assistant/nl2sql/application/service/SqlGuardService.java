@@ -1,9 +1,9 @@
 package com.victor.sql_api.assistant.nl2sql.application.service;
 
-import com.victor.sql_api.assistant.metadata.domain.model.MetadataContext;
-import com.victor.sql_api.assistant.metadata.domain.model.RelevantColumn;
-import com.victor.sql_api.assistant.metadata.domain.model.RelevantRelationship;
-import com.victor.sql_api.assistant.metadata.domain.model.RelevantTable;
+import com.victor.sql_api.assistant.retrieval.model.domain.MetadataContext;
+import com.victor.sql_api.assistant.retrieval.model.domain.RelevantColumn;
+import com.victor.sql_api.assistant.retrieval.model.domain.RelevantRelationship;
+import com.victor.sql_api.assistant.retrieval.model.domain.RelevantTable;
 import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstanding;
 import com.victor.sql_api.assistant.nl2sql.domain.model.SqlValidationResult;
 import net.sf.jsqlparser.JSQLParserException;
@@ -371,3 +371,5 @@ public class SqlGuardService {
         return false;
     }
 }
+
+

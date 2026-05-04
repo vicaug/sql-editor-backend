@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.metadata.domain.model;
+package com.victor.sql_api.assistant.retrieval.model.domain;
 
 public record RelevantRelationship(
         String fromSchema,
@@ -11,3 +11,5 @@ public record RelevantRelationship(
         double confidence
 ) {
 }
+
+

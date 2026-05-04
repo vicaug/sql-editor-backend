@@ -53,10 +53,8 @@ public class AiAssistantRouterService {
         if (provider == null || provider.trim().isBlank()) {
             return DEFAULT_PROVIDER;
         }
-        String normalized = provider.trim().toLowerCase(Locale.ROOT);
-        if ("ollama".equals(normalized)) {
-            return "lmstudio";
-        }
-        return normalized;
+        return provider.trim().toLowerCase(Locale.ROOT);
     }
 }
+
+

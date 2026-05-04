@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.metadata.domain.model;
+package com.victor.sql_api.assistant.retrieval.model.domain;
 
 import java.util.List;
 import java.util.Set;
@@ -20,3 +20,5 @@ public record RetrievalDiagnostics(
         List<String> relationshipResolutionDetails
 ) {
 }
+
+

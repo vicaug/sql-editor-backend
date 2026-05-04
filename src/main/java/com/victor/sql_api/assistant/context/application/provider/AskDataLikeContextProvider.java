@@ -1,23 +1,24 @@
-package com.victor.sql_api.assistant.askdatalike.application.service;
+package com.victor.sql_api.assistant.context.application.provider;
 
-import com.victor.sql_api.assistant.askdatalike.application.port.MetadataContextService;
-import com.victor.sql_api.assistant.metadata.application.model.RetrievalRequest;
-import com.victor.sql_api.assistant.metadata.domain.model.MetadataContext;
+import com.victor.sql_api.assistant.retrieval.providers.askdatalike.application.service.AskDataLikeMetadataRetrievalService;
+import com.victor.sql_api.assistant.context.application.port.MetadataContextProvider;
+import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
+import com.victor.sql_api.assistant.retrieval.model.domain.MetadataContext;
 import com.victor.sql_api.assistant.nl2sql.application.service.PromptContextBuilder;
 import com.victor.sql_api.assistant.nl2sql.application.service.QueryUnderstandingService;
 import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
-import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstandingDecision;
 import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstanding;
+import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstandingDecision;
 import org.springframework.stereotype.Service;
 
 @Service
-public class DefaultAskDataLikeContextService implements MetadataContextService {
+public class AskDataLikeContextProvider implements MetadataContextProvider {
 
     private final QueryUnderstandingService queryUnderstandingService;
     private final AskDataLikeMetadataRetrievalService metadataRetrievalService;
     private final PromptContextBuilder promptContextBuilder;
 
-    public DefaultAskDataLikeContextService(
+    public AskDataLikeContextProvider(
             QueryUnderstandingService queryUnderstandingService,
             AskDataLikeMetadataRetrievalService metadataRetrievalService,
             PromptContextBuilder promptContextBuilder
@@ -59,3 +60,5 @@ public class DefaultAskDataLikeContextService implements MetadataContextService 
         );
     }
 }
+
+

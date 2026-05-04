@@ -40,3 +40,5 @@ public class GlobalExceptionHandler {
         return new ResponseMeta(Instant.now(), UUID.randomUUID().toString());
     }
 }
+
+

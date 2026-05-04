@@ -13,3 +13,5 @@ public interface AiSuggestionService {
             String queryUnderstandingEngine
     );
 }
+
+

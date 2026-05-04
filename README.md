@@ -7,7 +7,7 @@ API Spring Boot para execução de SQL e sugestão de SQL com assistente de IA (
 O backend expõe:
 
 - execução de SQL (`/sql/run`)
-- sugestão de SQL via IA com contexto de metadata (`/assistant/suggest`)
+- sugestão de SQL via IA com contexto de metadata (`/assistant/text-to-sql-query`)
 - validação de SQL com contexto NL2SQL (`/assistant/nl2sql/validate`)
 
 O fluxo do assistente hoje é:
@@ -29,6 +29,50 @@ Estrutura em camadas:
 
 ## Endpoints
 
+## Mapa de Fluxo (Endpoints)
+
+### `POST /sql/run`
+
+```text
+Frontend/Client
+   -> SqlExecutionController
+      -> ExecuteSqlService
+         -> JdbcSqlExecutionGateway
+            -> PostgreSQL
+         -> ExecuteSqlResult
+      -> ApiResponse<ExecuteSqlResult>
+```
+
+### `POST /assistant/text-to-sql-query`
+
+```text
+Frontend/Client
+   -> AiAssistantController
+      -> AiAssistantRouterService (provider: lmstudio | openai)
+         -> BaseAiSuggestionService
+            -> MetadataContextProviderRouter (metadataProvider: askdata_like)
+               -> AskDataLikeContextProvider
+                  -> QueryUnderstandingService (auto | opennlp | heuristic)
+                  -> AskDataLikeMetadataRetrievalService
+                  -> PromptContextBuilder
+            -> AiTextGenerator (LmStudioTextGenerator | OpenAiTextGenerator)
+            -> (opcional) SqlGuardService
+            -> AiAssistantResult
+      -> ApiResponse<AiAssistantResult>
+```
+
+### `POST /assistant/nl2sql/validate`
+
+```text
+Frontend/Client
+   -> AiAssistantController
+      -> MetadataContextProviderRouter
+         -> AskDataLikeContextProvider
+      -> SqlGuardService.validate(...)
+      -> SqlValidationResponse
+      -> ApiResponse<SqlValidationResponse>
+```
+
 ### 1) Executar SQL
 
 - `POST /sql/run`
@@ -45,7 +89,7 @@ Request:
 
 ### 2) Assistente de IA (sugestão SQL)
 
-- `POST /assistant/suggest`
+- `POST /assistant/text-to-sql-query` (principal)
 
 Request:
 
@@ -59,9 +103,6 @@ Request:
   "enableSqlGuard": true
 }
 ```
-
-Observação:
-- `provider=ollama` é aceito como alias legado e roteado para `lmstudio`.
 
 ### 3) Validação NL2SQL
 
@@ -101,7 +142,7 @@ Para erro:
   "error": {
     "code": "AI_LMSTUDIO_TIMEOUT",
     "message": "Timeout ao chamar LM Studio...",
-    "path": "/assistant/suggest"
+    "path": "/assistant/text-to-sql-query"
   },
   "meta": {
     "timestamp": "2026-05-04T12:00:00Z",
