@@ -1,9 +1,17 @@
 package com.victor.sql_api.assistant.presentation.controller;
 
 import com.victor.sql_api.assistant.application.model.AiAssistantResult;
-import com.victor.sql_api.assistant.application.service.AiAssistantService;
+import com.victor.sql_api.assistant.application.service.AiAssistantRouterService;
+import com.victor.sql_api.assistant.application.service.MetadataContextRouterService;
+import com.victor.sql_api.assistant.metadata.application.model.RetrievalConstraints;
+import com.victor.sql_api.assistant.metadata.application.model.RetrievalRequest;
+import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
+import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
+import com.victor.sql_api.assistant.nl2sql.presentation.model.SqlValidationRequest;
+import com.victor.sql_api.assistant.nl2sql.presentation.model.SqlValidationResponse;
 import com.victor.sql_api.shared.api.ApiResponse;
 import com.victor.sql_api.shared.api.ResponseMeta;
+import com.victor.sql_api.shared.exception.BadRequestException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,10 +23,18 @@ import java.util.UUID;
 @RequestMapping("/assistant")
 public class AiAssistantController {
 
-    private final AiAssistantService aiAssistantService;
+    private final AiAssistantRouterService aiAssistantRouterService;
+    private final MetadataContextRouterService metadataContextRouterService;
+    private final SqlGuardService sqlGuardService;
 
-    public AiAssistantController(AiAssistantService aiAssistantService) {
-        this.aiAssistantService = aiAssistantService;
+    public AiAssistantController(
+            AiAssistantRouterService aiAssistantRouterService,
+            MetadataContextRouterService metadataContextRouterService,
+            SqlGuardService sqlGuardService
+    ) {
+        this.aiAssistantRouterService = aiAssistantRouterService;
+        this.metadataContextRouterService = metadataContextRouterService;
+        this.sqlGuardService = sqlGuardService;
     }
 
     @PostMapping("/suggest")
@@ -28,7 +44,18 @@ public class AiAssistantController {
             prompt = request == null ? null : asString(request.get("question"));
         }
         String currentSql = request == null ? null : asString(request.get("currentSql"));
-        AiAssistantResult result = aiAssistantService.suggest(prompt, currentSql);
+        String provider = request == null ? null : asString(request.get("provider"));
+        String metadataProvider = request == null ? null : asString(request.get("metadataProvider"));
+        String queryUnderstandingEngine = request == null ? null : asString(request.get("queryUnderstandingEngine"));
+        boolean enableSqlGuard = request == null || asBoolean(request.get("enableSqlGuard"), true);
+        AiAssistantResult result = aiAssistantRouterService.suggest(
+                prompt,
+                currentSql,
+                provider,
+                enableSqlGuard,
+                metadataProvider,
+                queryUnderstandingEngine
+        );
 
         return ResponseEntity.ok(
                 ApiResponse.success(
@@ -38,7 +65,35 @@ public class AiAssistantController {
         );
     }
 
+    @PostMapping("/nl2sql/validate")
+    public ResponseEntity<ApiResponse<SqlValidationResponse>> validateNl2sql(@RequestBody SqlValidationRequest request) {
+        if (request == null || request.question() == null || request.question().isBlank()) {
+            throw new BadRequestException("NL2SQL_QUESTION_EMPTY", "A pergunta para validacao NL2SQL nao pode ser vazia.");
+        }
+        Nl2SqlContext context = metadataContextRouterService.buildContext(
+                new RetrievalRequest(request.question(), RetrievalConstraints.defaults(), null),
+                "askdata_like"
+        );
+        var validation = sqlGuardService.validate(request.sql(), context.metadataContext(), context.queryUnderstanding());
+        SqlValidationResponse response = new SqlValidationResponse(validation, context, context.metadataContext().diagnostics());
+        return ResponseEntity.ok(ApiResponse.success(response, new ResponseMeta(Instant.now(), UUID.randomUUID().toString())));
+    }
+
     private String asString(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private boolean asBoolean(Object value, boolean defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(text);
     }
 }

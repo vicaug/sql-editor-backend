@@ -1,21 +1,21 @@
 package com.victor.sql_api.assistant.application.service;
 
-import com.victor.sql_api.assistant.infrastructure.llm.OpenAiTextGenerator;
+import com.victor.sql_api.assistant.infrastructure.llm.OllamaTextGenerator;
 import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
 import org.springframework.stereotype.Service;
 
 @Service
-public class AiAssistantService extends BaseAiSuggestionService {
-    public AiAssistantService(
+public class AiAssistantLocalService extends BaseAiSuggestionService {
+    public AiAssistantLocalService(
             MetadataContextRouterService metadataContextRouterService,
-            OpenAiTextGenerator openAiTextGenerator,
+            OllamaTextGenerator ollamaTextGenerator,
             SqlGuardService sqlGuardService
     ) {
-        super(metadataContextRouterService, openAiTextGenerator, sqlGuardService);
+        super(metadataContextRouterService, ollamaTextGenerator, sqlGuardService);
     }
 
     @Override
     public String provider() {
-        return "openai";
+        return "lmstudio";
     }
 }

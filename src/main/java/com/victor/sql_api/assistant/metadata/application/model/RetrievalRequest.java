@@ -2,7 +2,8 @@ package com.victor.sql_api.assistant.metadata.application.model;
 
 public record RetrievalRequest(
         String question,
-        RetrievalConstraints constraints
+        RetrievalConstraints constraints,
+        String queryUnderstandingEngine
 ) {
     public RetrievalConstraints effectiveConstraints() {
         return constraints == null ? RetrievalConstraints.defaults() : constraints;
