@@ -151,12 +151,6 @@ public class HeuristicQueryUnderstandingEngine implements QueryUnderstandingEngi
         return token != null && CLAUSE_BREAKERS.contains(token);
     }
 
-    private LinkedHashSet<String> extractMeaningfulTokens(Set<String> tokens) {
-        LinkedHashSet<String> result = new LinkedHashSet<>();
-        for (String token : tokens) if (token.length() >= 3) result.add(token);
-        return result;
-    }
-
     private LinkedHashSet<String> pickTokens(Set<String> tokens, Set<String> dictionary) {
         LinkedHashSet<String> result = new LinkedHashSet<>();
         for (String token : tokens) if (dictionary.contains(token) || isSimilarToAny(token, dictionary)) result.add(token);

@@ -89,8 +89,8 @@ public class SqlGuardService {
         if (!(stmt instanceof Select select)) {
             return List.of();
         }
-        TablesNamesFinder finder = new TablesNamesFinder();
-        List<String> tables = finder.getTableList((Statement) select);
+        TablesNamesFinder<Void> finder = new TablesNamesFinder<>();
+        List<String> tables = new ArrayList<>(finder.getTables((Statement) select));
         LinkedHashSet<String> normalized = new LinkedHashSet<>();
         for (String table : tables) {
             if (table != null && !table.isBlank()) {
