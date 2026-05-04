@@ -1,77 +1,39 @@
 # sql-editor-backend
 
-API Spring Boot para execução dinâmica de SQL e futura integração com AI Assistant.
+API Spring Boot para execução de SQL e sugestão de SQL com assistente de IA (NL2SQL).
 
-## Arquitetura adotada
+## Visão geral
 
-Estrutura em camadas, com separação clara de responsabilidades:
+O backend expõe:
 
-- `presentation`: controllers HTTP (sem DTO dedicado no momento)
-- `application`: services e modelos da aplicação
-- `domain`: contratos (ports) e modelos centrais
-- `infrastructure`: detalhes técnicos (JDBC, config, etc.)
-- `shared`: resposta padronizada e tratamento global de exceções
+- execução de SQL (`/sql/run`)
+- sugestão de SQL via IA com contexto de metadata (`/assistant/suggest`)
+- validação de SQL com contexto NL2SQL (`/assistant/nl2sql/validate`)
 
-Isso permite baixo acoplamento e facilita trocar implementação de infraestrutura sem afetar regras de negócio.
+O fluxo do assistente hoje é:
 
-## Estrutura de pacotes
+1. Entende a pergunta (engine `auto`, `opennlp` ou `heuristic`)
+2. Monta contexto de metadata (provider `askdata_like`)
+3. Chama a LLM local (LM Studio, API OpenAI-compatible)
+4. Opcionalmente valida com `SqlGuardService`
 
-```text
-com.victor.sql_api
-├── assistant
-│   ├── application
-│   │   ├── model
-│   │   └── service
-│   └── presentation
-│       └── controller
-├── config
-├── shared
-│   ├── api
-│   ├── exception
-│   └── handler
-└── sql
-    ├── application
-    │   ├── model
-    │   └── service
-    ├── domain
-    │   ├── model
-    │   └── port
-    ├── infrastructure
-    │   ├── config
-    │   └── gateway
-    └── presentation
-        └── controller
-```
+## Arquitetura
 
-## Metadata Retrieval (novo)
+Estrutura em camadas:
 
-Foi adicionado o módulo `assistant.metadata` para recuperar contexto relevante de metadados sem chamar LLM.
-
-Fluxo interno:
-
-- `MetadataRetrievalService` concentra toda a lógica do retrieval:
-  - análise da pergunta
-  - leitura do catálogo `eqt_metadata`
-  - matching/ranking de tabelas e colunas
-  - resolução de relacionamentos
-  - montagem de `MetadataContext`
-
-Ou seja: uma classe principal para chamar e entender o fluxo.
-
-Uso (camada de aplicação):
-
-```java
-MetadataContext context = metadataRetrievalService.retrieve(
-    new RetrievalRequest("qual o faturamento por região no mês passado?", null)
-);
-```
+- `presentation`: controllers HTTP
+- `application`: serviços de orquestração e modelos de aplicação
+- `domain`: modelos e contratos centrais
+- `infrastructure`: integrações técnicas (JDBC, LLM client, etc.)
+- `shared`: contrato padrão de API e tratamento global de exceções
 
 ## Endpoints
 
 ### 1) Executar SQL
 
 - `POST /sql/run`
-- Request:
+
+Request:
 
 ```json
 {
@@ -81,68 +43,116 @@ MetadataContext context = metadataRetrievalService.retrieve(
 }
 ```
 
-- Response (sucesso):
+### 2) Assistente de IA (sugestão SQL)
+
+- `POST /assistant/suggest`
+
+Request:
+
+```json
+{
+  "prompt": "Quero os 10 clientes com maior faturamento",
+  "currentSql": "",
+  "provider": "lmstudio",
+  "metadataProvider": "askdata_like",
+  "queryUnderstandingEngine": "auto",
+  "enableSqlGuard": true
+}
+```
+
+Observação:
+- `provider=ollama` é aceito como alias legado e roteado para `lmstudio`.
+
+### 3) Validação NL2SQL
+
+- `POST /assistant/nl2sql/validate`
+
+Request:
+
+```json
+{
+  "question": "traga pedidos pagos dos últimos 30 dias",
+  "sql": "select * from orders where status = 'PAID'"
+}
+```
+
+## Contrato de resposta
+
+Todas as rotas retornam `ApiResponse<T>`:
 
 ```json
 {
   "success": true,
-  "data": {
-    "executionId": "uuid",
-    "executedAt": "2026-04-17T18:00:00Z",
-    "durationMs": 18,
-    "statementType": "QUERY",
-    "columns": ["id", "name"],
-    "rows": [{ "id": 1, "name": "Ana" }],
-    "rowCount": 1,
-    "affectedRows": null,
-    "truncated": false,
-    "message": "Consulta executada com sucesso.",
-    "pagination": {
-      "page": 0,
-      "size": 50,
-      "hasNext": false,
-      "totalRows": null
-    }
-  },
+  "data": {},
   "error": null,
   "meta": {
-    "timestamp": "2026-04-17T18:00:00Z",
+    "timestamp": "2026-05-04T12:00:00Z",
     "traceId": "uuid"
   }
 }
 ```
 
-### 2) AI Assistant (estrutura pronta)
-
-- `POST /assistant/suggest`
-- Request:
+Para erro:
 
 ```json
 {
-  "prompt": "Quero os 10 clientes com maior faturamento",
-  "currentSql": "SELECT ..."
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "AI_LMSTUDIO_TIMEOUT",
+    "message": "Timeout ao chamar LM Studio...",
+    "path": "/assistant/suggest"
+  },
+  "meta": {
+    "timestamp": "2026-05-04T12:00:00Z",
+    "traceId": "uuid"
+  }
 }
 ```
 
-- Atualmente retorna erro controlado `501 NOT_IMPLEMENTED` com payload padronizado.
+## Configuração (application.properties)
 
-## Padronização de resposta e erros
+Principais propriedades:
 
-- Todas as respostas usam `ApiResponse<T>`
-- Erros de negócio/controlados usam exceções de aplicação (`ApiException`)
-- `GlobalExceptionHandler` centraliza o tratamento e mantém formato consistente
+- `server.port=8080`
+- `app.sql-execution.max-rows`
+- `app.sql-execution.query-timeout-seconds`
+- `app.sql-execution.default-page-size`
 
-## Configurações relevantes
+LLM local (LM Studio):
 
-No `application.properties`:
+- `app.ai.provider=lmstudio`
+- `app.ai.lmstudio.base-url=http://localhost:1234`
+- `app.ai.lmstudio.model=mistralai/ministral-3-3b`
+- `app.ai.lmstudio.temperature=0.0`
+- `app.ai.lmstudio.timeout-seconds=25`
 
-- `app.sql-execution.max-rows`: limite de linhas retornadas por query
-- `app.sql-execution.query-timeout-seconds`: timeout de execução SQL
-- `app.sql-execution.default-page-size`: tamanho padrão para paginação lógica
+NLP:
 
-## Evoluções já previstas no desenho
+- `app.nlp.pos-model-path=...`
 
-- Guardrails de SQL (allow/deny list, parser, políticas por usuário)
-- Auditoria (executionId, usuário, SQL hash, tempo, status)
-- Paginação real para queries arbitrárias (estratégia configurável)
-- Plug de LLM via serviço dedicado no módulo `assistant`
+## LM Studio
+
+Este projeto usa a API OpenAI-compatible do LM Studio:
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+
+Garanta que:
+
+1. O servidor do LM Studio está ativo em `localhost:1234`
+2. O modelo configurado em `app.ai.lmstudio.model` está carregado no LM Studio
+
+## Build e execução
+
+Compile:
+
+```bash
+./mvnw -q -DskipTests compile
+```
+
+Run:
+
+```bash
+./mvnw spring-boot:run
+```
