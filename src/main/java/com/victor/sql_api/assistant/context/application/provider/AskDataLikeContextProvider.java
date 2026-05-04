@@ -5,7 +5,7 @@ import com.victor.sql_api.assistant.context.application.port.MetadataContextProv
 import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
 import com.victor.sql_api.assistant.retrieval.model.domain.MetadataContext;
 import com.victor.sql_api.assistant.nl2sql.application.service.PromptContextBuilder;
-import com.victor.sql_api.assistant.nl2sql.application.service.QueryUnderstandingService;
+import com.victor.sql_api.assistant.nl2sql.application.service.QueryUnderstandingRouter;
 import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
 import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstanding;
 import com.victor.sql_api.assistant.nl2sql.domain.model.QueryUnderstandingDecision;
@@ -14,16 +14,16 @@ import org.springframework.stereotype.Service;
 @Service
 public class AskDataLikeContextProvider implements MetadataContextProvider {
 
-    private final QueryUnderstandingService queryUnderstandingService;
+    private final QueryUnderstandingRouter queryUnderstandingRouter;
     private final AskDataLikeMetadataRetrievalService metadataRetrievalService;
     private final PromptContextBuilder promptContextBuilder;
 
     public AskDataLikeContextProvider(
-            QueryUnderstandingService queryUnderstandingService,
+            QueryUnderstandingRouter queryUnderstandingRouter,
             AskDataLikeMetadataRetrievalService metadataRetrievalService,
             PromptContextBuilder promptContextBuilder
     ) {
-        this.queryUnderstandingService = queryUnderstandingService;
+        this.queryUnderstandingRouter = queryUnderstandingRouter;
         this.metadataRetrievalService = metadataRetrievalService;
         this.promptContextBuilder = promptContextBuilder;
     }
@@ -35,7 +35,7 @@ public class AskDataLikeContextProvider implements MetadataContextProvider {
 
     @Override
     public Nl2SqlContext buildContext(RetrievalRequest request) {
-        QueryUnderstandingDecision decision = queryUnderstandingService.analyzeDecision(
+        QueryUnderstandingDecision decision = queryUnderstandingRouter.analyzeDecision(
                 request.question(),
                 request.queryUnderstandingEngine()
         );
@@ -60,5 +60,6 @@ public class AskDataLikeContextProvider implements MetadataContextProvider {
         );
     }
 }
+
 
 

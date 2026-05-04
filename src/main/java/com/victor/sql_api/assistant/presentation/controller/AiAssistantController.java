@@ -1,8 +1,8 @@
 package com.victor.sql_api.assistant.presentation.controller;
 
 import com.victor.sql_api.assistant.application.model.AiAssistantResult;
-import com.victor.sql_api.assistant.application.service.AiAssistantRouterService;
-import com.victor.sql_api.assistant.context.application.service.MetadataContextProviderRouter;
+import com.victor.sql_api.assistant.application.router.AiAssistantProviderRouter;
+import com.victor.sql_api.assistant.context.application.router.MetadataContextProviderRouter;
 import com.victor.sql_api.assistant.retrieval.model.application.RetrievalConstraints;
 import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
 import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
@@ -23,16 +23,16 @@ import java.util.UUID;
 @RequestMapping("/assistant")
 public class AiAssistantController {
 
-    private final AiAssistantRouterService aiAssistantRouterService;
+    private final AiAssistantProviderRouter aiAssistantProviderRouter;
     private final MetadataContextProviderRouter metadataContextRouterService;
     private final SqlGuardService sqlGuardService;
 
     public AiAssistantController(
-            AiAssistantRouterService aiAssistantRouterService,
+            AiAssistantProviderRouter aiAssistantProviderRouter,
             MetadataContextProviderRouter metadataContextRouterService,
             SqlGuardService sqlGuardService
     ) {
-        this.aiAssistantRouterService = aiAssistantRouterService;
+        this.aiAssistantProviderRouter = aiAssistantProviderRouter;
         this.metadataContextRouterService = metadataContextRouterService;
         this.sqlGuardService = sqlGuardService;
     }
@@ -52,7 +52,7 @@ public class AiAssistantController {
         String metadataProvider = request == null ? null : asString(request.get("metadataProvider"));
         String queryUnderstandingEngine = request == null ? null : asString(request.get("queryUnderstandingEngine"));
         boolean enableSqlGuard = request == null || asBoolean(request.get("enableSqlGuard"), true);
-        AiAssistantResult result = aiAssistantRouterService.suggest(
+        AiAssistantResult result = aiAssistantProviderRouter.suggest(
                 prompt,
                 currentSql,
                 provider,
@@ -101,5 +101,6 @@ public class AiAssistantController {
         return Boolean.parseBoolean(text);
     }
 }
+
 
 

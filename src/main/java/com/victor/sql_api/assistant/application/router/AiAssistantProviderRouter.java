@@ -1,6 +1,7 @@
-package com.victor.sql_api.assistant.application.service;
+package com.victor.sql_api.assistant.application.router;
 
 import com.victor.sql_api.assistant.application.model.AiAssistantResult;
+import com.victor.sql_api.assistant.application.service.AiSuggestionService;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import org.springframework.stereotype.Service;
 
@@ -10,12 +11,12 @@ import java.util.Locale;
 import java.util.Map;
 
 @Service
-public class AiAssistantRouterService {
+public class AiAssistantProviderRouter {
     private static final String DEFAULT_PROVIDER = "lmstudio";
 
     private final Map<String, AiSuggestionService> servicesByProvider;
 
-    public AiAssistantRouterService(List<AiSuggestionService> services) {
+    public AiAssistantProviderRouter(List<AiSuggestionService> services) {
         this.servicesByProvider = new HashMap<>();
         for (AiSuggestionService service : services) {
             servicesByProvider.put(normalizeProvider(service.provider()), service);
@@ -56,5 +57,6 @@ public class AiAssistantRouterService {
         return provider.trim().toLowerCase(Locale.ROOT);
     }
 }
+
 
 

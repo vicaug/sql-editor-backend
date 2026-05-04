@@ -2,7 +2,7 @@ package com.victor.sql_api.assistant.application.service;
 
 import com.victor.sql_api.assistant.application.model.AiAssistantResult;
 import com.victor.sql_api.assistant.application.port.AiTextGenerator;
-import com.victor.sql_api.assistant.context.application.service.MetadataContextProviderRouter;
+import com.victor.sql_api.assistant.context.application.router.MetadataContextProviderRouter;
 import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
 import com.victor.sql_api.assistant.retrieval.model.domain.MetadataContext;
 import com.victor.sql_api.assistant.retrieval.model.domain.RelevantColumn;
@@ -228,5 +228,6 @@ abstract class BaseAiSuggestionService implements AiSuggestionService {
         return value.trim();
     }
 }
+
 
 

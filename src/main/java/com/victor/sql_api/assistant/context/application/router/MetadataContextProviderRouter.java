@@ -1,4 +1,4 @@
-package com.victor.sql_api.assistant.context.application.service;
+package com.victor.sql_api.assistant.context.application.router;
 
 import com.victor.sql_api.assistant.context.application.port.MetadataContextProvider;
 import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
@@ -51,5 +51,6 @@ public class MetadataContextProviderRouter {
         return provider.trim().toLowerCase(Locale.ROOT);
     }
 }
+
 
 

@@ -2,7 +2,7 @@ package com.victor.sql_api.assistant.application.service;
 
 import com.victor.sql_api.assistant.infrastructure.llm.OpenAiTextGenerator;
 import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
-import com.victor.sql_api.assistant.context.application.service.MetadataContextProviderRouter;
+import com.victor.sql_api.assistant.context.application.router.MetadataContextProviderRouter;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -20,5 +20,6 @@ public class AiAssistantService extends BaseAiSuggestionService {
         return "openai";
     }
 }
+
 
 

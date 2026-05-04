@@ -12,14 +12,14 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 @Service
-public class QueryUnderstandingService {
-    private static final Logger log = LoggerFactory.getLogger(QueryUnderstandingService.class);
+public class QueryUnderstandingRouter {
+    private static final Logger log = LoggerFactory.getLogger(QueryUnderstandingRouter.class);
     private static final double OPENNLP_CONFIDENCE_THRESHOLD = 0.55;
     private static final String OPENNLP_ENGINE = "opennlp";
     private static final String HEURISTIC_ENGINE = "heuristic";
     private final List<QueryUnderstandingEngine> engines;
 
-    public QueryUnderstandingService(List<QueryUnderstandingEngine> engines) {
+    public QueryUnderstandingRouter(List<QueryUnderstandingEngine> engines) {
         AnnotationAwareOrderComparator.sort(engines);
         this.engines = List.copyOf(engines);
     }
@@ -125,5 +125,6 @@ public class QueryUnderstandingService {
         return null;
     }
 }
+
 
 
