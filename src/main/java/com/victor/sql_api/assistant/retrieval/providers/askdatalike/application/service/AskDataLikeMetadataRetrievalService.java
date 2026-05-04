@@ -95,10 +95,6 @@ public class AskDataLikeMetadataRetrievalService {
                 ))
                 .toList();
 
-        Set<String> selectedColumnKeySet = selectedColumnsMeta.stream()
-                .map(column -> columnKey(column.schemaName, column.tableName, column.columnName))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
         List<RelevantColumn> relevantColumns = selectedColumnsMeta.stream()
                 .map(column -> {
                     double score = forcedColumnKeys.contains(columnKey(column.schemaName, column.tableName, column.columnName))
