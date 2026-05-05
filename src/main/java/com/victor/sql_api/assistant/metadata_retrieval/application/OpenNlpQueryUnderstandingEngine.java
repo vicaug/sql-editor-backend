@@ -3,7 +3,6 @@ package com.victor.sql_api.assistant.metadata_retrieval.application;
 import com.victor.sql_api.assistant.nl2sql.model.QueryIntent;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import org.apache.commons.text.similarity.JaroWinklerSimilarity;
-import opennlp.tools.postag.POSModel;
 import opennlp.tools.postag.POSTaggerME;
 import opennlp.tools.tokenize.SimpleTokenizer;
 import opennlp.tools.util.Span;
@@ -11,12 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.FileInputStream;
-import java.io.InputStream;
 import java.text.Normalizer;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -47,14 +42,13 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
             "o", "a", "os", "as", "um", "uma", "de", "do", "da", "dos", "das", "por"
     );
     private static final double FUZZY_THRESHOLD = 0.90;
-    private static final String PT_POS_MODEL_CLASSPATH = "nlp/opennlp-pt-ud-gsd-pos-1.3-2.5.4.bin";
 
     private final JaroWinklerSimilarity similarity = new JaroWinklerSimilarity();
     private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
     private final POSTaggerME posTagger;
 
-    public OpenNlpQueryUnderstandingEngine(@Value("${app.nlp.pos-model-path:}") String posModelPath) {
-        this.posTagger = loadPosTagger(posModelPath);
+    public OpenNlpQueryUnderstandingEngine(OpenNlpPosTaggerProvider posTaggerProvider) {
+        this.posTagger = posTaggerProvider.getPosTagger();
     }
 
     @Override
@@ -246,26 +240,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         return tokens;
     }
 
-    private POSTaggerME loadPosTagger(String externalPath) {
-        if (externalPath != null && !externalPath.isBlank()) {
-            try (InputStream input = new FileInputStream(externalPath.trim())) {
-                POSModel model = new POSModel(input);
-                log.info("Modelo POS OpenNLP carregado via application.properties: {}", externalPath.trim());
-                return new POSTaggerME(model);
-            } catch (Exception ex) {
-                log.warn("Falha ao carregar modelo POS OpenNLP via app.nlp.pos-model-path={}. Motivo: {}", externalPath.trim(), ex.getMessage());
-            }
-        }
-
-        try (InputStream input = new ClassPathResource(PT_POS_MODEL_CLASSPATH).getInputStream()) {
-            POSModel model = new POSModel(input);
-            log.info("Modelo POS OpenNLP carregado via classpath: {}", PT_POS_MODEL_CLASSPATH);
-            return new POSTaggerME(model);
-        } catch (Exception ex) {
-            log.info("Modelo POS OpenNLP indisponivel no classpath ({}).", PT_POS_MODEL_CLASSPATH);
-            return null;
-        }
-    }
 }
 
 

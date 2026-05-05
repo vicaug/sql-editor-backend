@@ -6,16 +6,11 @@ import com.victor.sql_api.assistant.metadata.infrastructure.MetadataCatalogGatew
 import com.victor.sql_api.assistant.metadata.model.context.*;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
-import opennlp.tools.postag.POSModel;
 import opennlp.tools.postag.POSTaggerME;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
-import java.io.FileInputStream;
-import java.io.InputStream;
 import java.text.Normalizer;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -27,7 +22,6 @@ public class AskDataLikeMetadataRetrievalService {
      * this service queries eqt_metadata tables and ranks relevant tables/columns/relationships.
      */
     private static final Logger log = LoggerFactory.getLogger(AskDataLikeMetadataRetrievalService.class);
-    private static final String PT_POS_MODEL_CLASSPATH = "nlp/opennlp-pt-ud-gsd-pos-1.3-2.5.4.bin";
 
     private static final Set<String> STOPWORDS = Set.of(
             "a", "o", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "para", "por", "com",
@@ -40,10 +34,10 @@ public class AskDataLikeMetadataRetrievalService {
 
     public AskDataLikeMetadataRetrievalService(
             MetadataCatalogGateway metadataCatalogGateway,
-            @Value("${app.nlp.pos-model-path:}") String posModelPath
+            OpenNlpPosTaggerProvider posTaggerProvider
     ) {
         this.metadataCatalogGateway = metadataCatalogGateway;
-        this.posTagger = loadPosTagger(posModelPath);
+        this.posTagger = posTaggerProvider.getPosTagger();
     }
 
     public MetadataContext retrieve(RetrievalRequest request) {
@@ -72,29 +66,37 @@ public class AskDataLikeMetadataRetrievalService {
         List<ColumnMeta> allColumnsFromAllTables = fetchColumns(allTables);
         Map<String, List<ColumnMeta>> columnsByTable = allColumnsFromAllTables.stream()
                 .collect(Collectors.groupingBy(c -> tableKey(c.schemaName, c.tableName), LinkedHashMap::new, Collectors.toList()));
-        Set<String> forcedTableKeys = Set.of();
 
         List<TableMeta> selectedTablesMeta = selectTables(
                 allTables,
                 columnsByTable,
                 questionTokens,
-                forcedTableKeys,
                 constraints.maxTables()
         );
 
-        List<ColumnMeta> allColumns = allColumnsFromAllTables.stream()
-                .filter(c -> selectedTablesMeta.stream().anyMatch(t -> tableKey(t.schemaName, t.tableName).equals(tableKey(c.schemaName, c.tableName))))
+        Set<String> selectedTableKeys = selectedTablesMeta.stream()
+                .map(table -> tableKey(table.schemaName, table.tableName))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<ColumnMeta> columnsInSelectedTables = allColumnsFromAllTables.stream()
+                .filter(c -> selectedTableKeys.contains(tableKey(c.schemaName, c.tableName)))
                 .toList();
-        Set<String> forcedColumnKeys = Set.of();
 
         List<ColumnMeta> selectedColumnsMeta = selectColumns(
-                allColumns,
+                columnsInSelectedTables,
                 questionTokens,
-                forcedColumnKeys,
                 understanding,
                 constraints.maxColumnsPerTable(),
                 constraints.maxTotalColumns()
         );
+
+        Map<String, Double> scoreByColumnKey = selectedColumnsMeta.stream()
+                .collect(Collectors.toMap(
+                        c -> columnKey(c.schemaName, c.tableName, c.columnName),
+                        c -> clampScore(scoreColumn(c, questionTokens, understanding)),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
 
         List<RelationshipMeta> allRelationships = fetchRelationships(selectedTablesMeta);
         List<RelevantRelationship> selectedRelationships = selectRelationships(
@@ -114,9 +116,8 @@ public class AskDataLikeMetadataRetrievalService {
 
         List<RelevantColumn> relevantColumns = selectedColumnsMeta.stream()
                 .map(column -> {
-                    double score = forcedColumnKeys.contains(columnKey(column.schemaName, column.tableName, column.columnName))
-                            ? 1.0
-                            : 0.75;
+                    String key = columnKey(column.schemaName, column.tableName, column.columnName);
+                    double score = scoreByColumnKey.getOrDefault(key, 0.0);
                     return new RelevantColumn(
                             column.schemaName,
                             column.tableName,
@@ -136,17 +137,15 @@ public class AskDataLikeMetadataRetrievalService {
             hints.add(new RetrievalHint("RELATIONSHIP_HINT", "JOIN_PATH_AVAILABLE", 0.90));
         }
 
-        boolean usedBusinessTermTables = !forcedTableKeys.isEmpty();
         List<String> tableDetails = selectedTablesMeta.stream()
                 .map(table -> table.schemaName + "." + table.tableName
-                        + " | reason=" + (usedBusinessTermTables ? "semantic_match+business_term_boost" : "semantic_match"))
+                        + " | reason=semantic_match")
                 .toList();
 
         List<String> columnDetails = selectedColumnsMeta.stream()
                 .map(column -> {
                     String key = columnKey(column.schemaName, column.tableName, column.columnName);
-                    String reason = forcedColumnKeys.contains(key) ? "business_term_target_column" : "structural_context_column";
-                    return key + " | reason=" + reason;
+                    return key + " | score=" + format(scoreByColumnKey.getOrDefault(key, 0.0)) + " | reason=structural_context_column";
                 })
                 .toList();
 
@@ -163,7 +162,7 @@ public class AskDataLikeMetadataRetrievalService {
                 queryUnderstandingFallbackApplied,
                 queryUnderstandingFallbackReason,
                 allTables.size(),
-                allColumns.size(),
+                columnsInSelectedTables.size(),
                 allRelationships.size(),
                 relevantTables.size(),
                 relevantColumns.size(),
@@ -262,7 +261,6 @@ public class AskDataLikeMetadataRetrievalService {
     private List<ColumnMeta> selectColumns(
             List<ColumnMeta> allColumns,
             Set<String> questionTokens,
-            Set<String> forcedColumnKeys,
             QueryUnderstanding understanding,
             int maxColumnsPerTable,
             int maxTotalColumns
@@ -272,7 +270,7 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         List<ColumnMeta> priority = allColumns.stream()
-                .sorted(Comparator.comparingDouble((ColumnMeta c) -> scoreColumn(c, questionTokens, forcedColumnKeys, understanding)).reversed())
+                .sorted(Comparator.comparingDouble((ColumnMeta c) -> scoreColumn(c, questionTokens, understanding)).reversed())
                 .toList();
 
         int safePerTable = Math.max(0, maxColumnsPerTable);
@@ -300,7 +298,6 @@ public class AskDataLikeMetadataRetrievalService {
             List<TableMeta> allTables,
             Map<String, List<ColumnMeta>> columnsByTable,
             Set<String> questionTokens,
-            Set<String> forcedTableKeys,
             int maxTables
     ) {
         int safeMaxTables = Math.max(0, maxTables);
@@ -309,7 +306,7 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         return allTables.stream()
-                .sorted(Comparator.comparingDouble((TableMeta t) -> scoreTable(t, columnsByTable, questionTokens, forcedTableKeys)).reversed())
+                .sorted(Comparator.comparingDouble((TableMeta t) -> scoreTable(t, columnsByTable, questionTokens)).reversed())
                 .limit(safeMaxTables)
                 .toList();
     }
@@ -317,8 +314,7 @@ public class AskDataLikeMetadataRetrievalService {
     private double scoreTable(
             TableMeta table,
             Map<String, List<ColumnMeta>> columnsByTable,
-            Set<String> questionTokens,
-            Set<String> forcedTableKeys
+            Set<String> questionTokens
     ) {
         String tableTokensText = normalizeText(table.tableName + " " + defaultString(table.tableDescription));
         Set<String> tableTokens = tokenize(tableTokensText);
@@ -334,14 +330,12 @@ public class AskDataLikeMetadataRetrievalService {
                 })
                 .max()
                 .orElse(0.0);
-        double btBoost = forcedTableKeys.contains(tableKey(table.schemaName, table.tableName)) ? 0.35 : 0.0;
-        return (blendedTableScore * 0.55) + (columnsSemanticScore * 0.45) + btBoost;
+        return (blendedTableScore * 0.55) + (columnsSemanticScore * 0.45);
     }
 
     private double scoreColumn(
             ColumnMeta column,
             Set<String> questionTokens,
-            Set<String> forcedColumnKeys,
             QueryUnderstanding understanding
     ) {
         String columnTokensText = normalizeText(column.columnName + " " + defaultString(column.columnComment) + " " + defaultString(column.semanticRole));
@@ -349,10 +343,9 @@ public class AskDataLikeMetadataRetrievalService {
         double semanticScore = overlapScore(questionTokens, columnTokens);
         double nlpScore = openNlpSimilarity(questionTokens, columnTokensText);
         double blendedScore = blendedSimilarity(semanticScore, nlpScore);
-        double btBoost = forcedColumnKeys.contains(columnKey(column.schemaName, column.tableName, column.columnName)) ? 0.30 : 0.0;
         double structuralBoost = (column.primaryKey || column.foreignKey) ? 0.10 : 0.0;
         double roleBoost = matchesUnderstandingRole(column.semanticRole, understanding) ? 0.10 : 0.0;
-        return blendedScore + btBoost + structuralBoost + roleBoost;
+        return blendedScore + structuralBoost + roleBoost;
     }
 
     private double overlapScore(Set<String> left, Set<String> right) {
@@ -569,25 +562,8 @@ public class AskDataLikeMetadataRetrievalService {
         return String.format(Locale.ROOT, "%.3f", value);
     }
 
-    private POSTaggerME loadPosTagger(String externalPath) {
-        if (externalPath != null && !externalPath.isBlank()) {
-            try (InputStream input = new FileInputStream(externalPath.trim())) {
-                POSModel model = new POSModel(input);
-                log.info("Modelo POS OpenNLP carregado via application.properties: {}", externalPath.trim());
-                return new POSTaggerME(model);
-            } catch (Exception ex) {
-                log.warn("Falha ao carregar modelo POS OpenNLP via app.nlp.pos-model-path={}. Motivo: {}", externalPath.trim(), ex.getMessage());
-            }
-        }
-
-        try (InputStream input = new ClassPathResource(PT_POS_MODEL_CLASSPATH).getInputStream()) {
-            POSModel model = new POSModel(input);
-            log.info("Modelo POS OpenNLP carregado via classpath: {}", PT_POS_MODEL_CLASSPATH);
-            return new POSTaggerME(model);
-        } catch (Exception ex) {
-            log.info("Modelo POS OpenNLP indisponivel no classpath ({}).", PT_POS_MODEL_CLASSPATH);
-            return null;
-        }
+    private double clampScore(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     private record TableMeta(String schemaName, String tableName, String tableDescription) {
