@@ -1,8 +1,8 @@
 package com.victor.sql_api.assistant.nl2sql.presentation.model;
 
-import com.victor.sql_api.assistant.retrieval.model.domain.RetrievalDiagnostics;
-import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
-import com.victor.sql_api.assistant.nl2sql.domain.model.SqlValidationResult;
+import com.victor.sql_api.assistant.metadata.model.context.RetrievalDiagnostics;
+import com.victor.sql_api.assistant.nl2sql.model.Nl2SqlContext;
+import com.victor.sql_api.assistant.nl2sql.model.SqlValidationResult;
 
 public record SqlValidationResponse(
         SqlValidationResult validation,
@@ -10,6 +10,11 @@ public record SqlValidationResponse(
         RetrievalDiagnostics diagnostics
 ) {
 }
+
+
+
+
+
 
 
 

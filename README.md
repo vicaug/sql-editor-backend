@@ -1,77 +1,106 @@
 # sql-editor-backend
 
-API Spring Boot para execução de SQL e sugestão de SQL com assistente de IA (NL2SQL).
+API Spring Boot para execução de SQL e fluxo de Text-to-SQL com IA local/remota.
 
-## Visão geral
+## Visão Rápida
 
-O backend expõe:
+Endpoints principais:
 
-- execução de SQL (`/sql/run`)
-- sugestão de SQL via IA com contexto de metadata (`/assistant/text-to-sql-query`)
-- validação de SQL com contexto NL2SQL (`/assistant/nl2sql/validate`)
+- `POST /sql/run`
+- `POST /assistant/text-to-sql-query`
+- `POST /assistant/nl2sql/validate`
 
-O fluxo do assistente hoje é:
+## Arquitetura por Serviço
 
-1. Entende a pergunta (engine `auto`, `opennlp` ou `heuristic`)
-2. Monta contexto de metadata (provider `askdata_like`)
-3. Chama a LLM local (LM Studio, API OpenAI-compatible)
-4. Opcionalmente valida com `SqlGuardService`
+O módulo `assistant` está organizado por responsabilidade de negócio:
 
-## Arquitetura
+- `assistant/metadata`
+  - Modelos de metadata de contexto (`metadata/model/context`)
+  - Gateway de acesso ao catálogo (`metadata/infrastructure/MetadataCatalogGateway`)
 
-Estrutura em camadas:
+- `assistant/metadata_retrieval`
+  - Entendimento da pergunta (`OpenNLP` + heurística)
+  - Retrieval e ranking de metadata
+  - Montagem de contexto textual para a LLM
+  - Router/provider de contexto
 
-- `presentation`: controllers HTTP
-- `application`: serviços de orquestração e modelos de aplicação
-- `domain`: modelos e contratos centrais
-- `infrastructure`: integrações técnicas (JDBC, LLM client, etc.)
-- `shared`: contrato padrão de API e tratamento global de exceções
+- `assistant/llm`
+  - Router de provider de LLM (`lmstudio`, `openai`)
+  - Providers de geração (`AiTextGenerator`)
+  - Prompt de sistema (`llm/prompt/TextToSqlPromptTemplate`)
+
+- `assistant/nl2sql`
+  - Orquestrador do fluxo completo (`nl2sql/application/Nl2SqlOrchestrator`)
+  - Modelos de pipeline (`nl2sql/model`)
+  - DTOs de validação (`nl2sql/presentation/model`)
+
+- `assistant/sql_guard`
+  - Validação de SQL gerado (`sql_guard/application/SqlGuardService`)
+
+## Mapa de Fluxo (Text-to-SQL)
+
+```text
+POST /assistant/text-to-sql-query
+  -> AiAssistantController
+    -> LlmProviderRouter (escolhe provider: lmstudio/openai)
+      -> BaseLlmSqlSuggester (adapter por provider)
+        -> Nl2SqlOrchestrator (orquestra o pipeline)
+          1) MetadataContextProviderRouter
+             -> AskDataLikeContextProvider
+                -> QueryUnderstandingRouter (opennlp/heuristic)
+                -> AskDataLikeMetadataRetrievalService
+                   -> MetadataCatalogGateway (eqt_metadata)
+                -> PromptContextBuilder
+          2) AiTextGenerator.generate(systemPrompt, userPrompt)
+          3) SqlGuardService.validate(...) [opcional]
+          4) AiAssistantResult
+```
+
+## Mapa de Fluxo (SQL Guard Validate)
+
+```text
+POST /assistant/nl2sql/validate
+  -> AiAssistantController
+    -> MetadataContextProviderRouter
+    -> SqlGuardService.validate(...)
+    -> SqlValidationResponse
+```
+
+## Contrato de Resposta
+
+Todas as rotas usam `ApiResponse<T>`:
+
+```json
+{
+  "success": true,
+  "data": {},
+  "error": null,
+  "meta": {
+    "timestamp": "2026-05-04T12:00:00Z",
+    "traceId": "uuid"
+  }
+}
+```
+
+Exemplo de erro:
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "AI_LMSTUDIO_TIMEOUT",
+    "message": "Timeout ao chamar LM Studio...",
+    "path": "/assistant/text-to-sql-query"
+  },
+  "meta": {
+    "timestamp": "2026-05-04T12:00:00Z",
+    "traceId": "uuid"
+  }
+}
+```
 
 ## Endpoints
-
-## Mapa de Fluxo (Endpoints)
-
-### `POST /sql/run`
-
-```text
-Frontend/Client
-   -> SqlExecutionController
-      -> ExecuteSqlService
-         -> JdbcSqlExecutionGateway
-            -> PostgreSQL
-         -> ExecuteSqlResult
-      -> ApiResponse<ExecuteSqlResult>
-```
-
-### `POST /assistant/text-to-sql-query`
-
-```text
-Frontend/Client
-   -> AiAssistantController
-      -> AiAssistantRouterService (provider: lmstudio | openai)
-         -> BaseAiSuggestionService
-            -> MetadataContextProviderRouter (metadataProvider: askdata_like)
-               -> AskDataLikeContextProvider
-                  -> QueryUnderstandingService (auto | opennlp | heuristic)
-                  -> AskDataLikeMetadataRetrievalService
-                  -> PromptContextBuilder
-            -> AiTextGenerator (LmStudioTextGenerator | OpenAiTextGenerator)
-            -> (opcional) SqlGuardService
-            -> AiAssistantResult
-      -> ApiResponse<AiAssistantResult>
-```
-
-### `POST /assistant/nl2sql/validate`
-
-```text
-Frontend/Client
-   -> AiAssistantController
-      -> MetadataContextProviderRouter
-         -> AskDataLikeContextProvider
-      -> SqlGuardService.validate(...)
-      -> SqlValidationResponse
-      -> ApiResponse<SqlValidationResponse>
-```
 
 ### 1) Executar SQL
 
@@ -87,9 +116,9 @@ Request:
 }
 ```
 
-### 2) Assistente de IA (sugestão SQL)
+### 2) Text-to-SQL
 
-- `POST /assistant/text-to-sql-query` (principal)
+- `POST /assistant/text-to-sql-query`
 
 Request:
 
@@ -117,43 +146,9 @@ Request:
 }
 ```
 
-## Contrato de resposta
+## Configuração
 
-Todas as rotas retornam `ApiResponse<T>`:
-
-```json
-{
-  "success": true,
-  "data": {},
-  "error": null,
-  "meta": {
-    "timestamp": "2026-05-04T12:00:00Z",
-    "traceId": "uuid"
-  }
-}
-```
-
-Para erro:
-
-```json
-{
-  "success": false,
-  "data": null,
-  "error": {
-    "code": "AI_LMSTUDIO_TIMEOUT",
-    "message": "Timeout ao chamar LM Studio...",
-    "path": "/assistant/text-to-sql-query"
-  },
-  "meta": {
-    "timestamp": "2026-05-04T12:00:00Z",
-    "traceId": "uuid"
-  }
-}
-```
-
-## Configuração (application.properties)
-
-Principais propriedades:
+Principais propriedades em `application.properties`:
 
 - `server.port=8080`
 - `app.sql-execution.max-rows`
@@ -174,17 +169,17 @@ NLP:
 
 ## LM Studio
 
-Este projeto usa a API OpenAI-compatible do LM Studio:
+Integração via API OpenAI-compatible:
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
-Garanta que:
+Checklist:
 
-1. O servidor do LM Studio está ativo em `localhost:1234`
-2. O modelo configurado em `app.ai.lmstudio.model` está carregado no LM Studio
+1. Servidor LM Studio ativo em `localhost:1234`
+2. Modelo configurado em `app.ai.lmstudio.model` carregado
 
-## Build e execução
+## Build e Execução
 
 Compile:
 

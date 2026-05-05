@@ -1,12 +1,12 @@
 package com.victor.sql_api.assistant.presentation.controller;
 
-import com.victor.sql_api.assistant.application.model.AiAssistantResult;
-import com.victor.sql_api.assistant.application.router.AiAssistantProviderRouter;
-import com.victor.sql_api.assistant.context.application.router.MetadataContextProviderRouter;
-import com.victor.sql_api.assistant.retrieval.model.application.RetrievalConstraints;
-import com.victor.sql_api.assistant.retrieval.model.application.RetrievalRequest;
-import com.victor.sql_api.assistant.nl2sql.application.service.SqlGuardService;
-import com.victor.sql_api.assistant.nl2sql.domain.model.Nl2SqlContext;
+import com.victor.sql_api.assistant.nl2sql.model.AiAssistantResult;
+import com.victor.sql_api.assistant.llm.router.LlmProviderRouter;
+import com.victor.sql_api.assistant.metadata_retrieval.router.MetadataContextProviderRouter;
+import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalConstraints;
+import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalRequest;
+import com.victor.sql_api.assistant.sql_guard.application.SqlGuardService;
+import com.victor.sql_api.assistant.nl2sql.model.Nl2SqlContext;
 import com.victor.sql_api.assistant.nl2sql.presentation.model.SqlValidationRequest;
 import com.victor.sql_api.assistant.nl2sql.presentation.model.SqlValidationResponse;
 import com.victor.sql_api.shared.api.ApiResponse;
@@ -23,16 +23,16 @@ import java.util.UUID;
 @RequestMapping("/assistant")
 public class AiAssistantController {
 
-    private final AiAssistantProviderRouter aiAssistantProviderRouter;
+    private final LlmProviderRouter llmProviderRouter;
     private final MetadataContextProviderRouter metadataContextRouterService;
     private final SqlGuardService sqlGuardService;
 
     public AiAssistantController(
-            AiAssistantProviderRouter aiAssistantProviderRouter,
+            LlmProviderRouter llmProviderRouter,
             MetadataContextProviderRouter metadataContextRouterService,
             SqlGuardService sqlGuardService
     ) {
-        this.aiAssistantProviderRouter = aiAssistantProviderRouter;
+        this.llmProviderRouter = llmProviderRouter;
         this.metadataContextRouterService = metadataContextRouterService;
         this.sqlGuardService = sqlGuardService;
     }
@@ -52,7 +52,7 @@ public class AiAssistantController {
         String metadataProvider = request == null ? null : asString(request.get("metadataProvider"));
         String queryUnderstandingEngine = request == null ? null : asString(request.get("queryUnderstandingEngine"));
         boolean enableSqlGuard = request == null || asBoolean(request.get("enableSqlGuard"), true);
-        AiAssistantResult result = aiAssistantProviderRouter.suggest(
+        AiAssistantResult result = llmProviderRouter.suggest(
                 prompt,
                 currentSql,
                 provider,
@@ -101,6 +101,11 @@ public class AiAssistantController {
         return Boolean.parseBoolean(text);
     }
 }
+
+
+
+
+
 
 
 
