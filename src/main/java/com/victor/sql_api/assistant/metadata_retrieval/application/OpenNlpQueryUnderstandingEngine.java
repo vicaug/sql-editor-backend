@@ -31,6 +31,7 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     private static final Set<String> COMPARISON_TERMS = Set.of("comparar", "versus", "vs", "diferenca", "maior", "menor");
     private static final Set<String> TREND_TERMS = Set.of("evolucao", "mensal", "semanal", "diario", "anual", "historico", "ao longo");
     private static final Set<String> DETAIL_TERMS = Set.of("detalhe", "listar", "lista", "exibir", "mostrar");
+    private static final Set<String> DETAIL_QUESTION_TERMS = Set.of("qual", "quais", "quem", "onde");
     private static final Set<String> GROUP_CONNECTORS = Set.of("por");
     private static final Set<String> DIMENSION_SEPARATORS = Set.of(",", "e", "vs", "versus");
     private static final Set<String> CLAUSE_BREAKERS = Set.of(
@@ -81,8 +82,7 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         boolean requiresAggregation = intent == QueryIntent.AGGREGATION || intent == QueryIntent.TREND || !metrics.isEmpty();
         boolean requiresJoin = !dimensions.isEmpty();
 
-        double confidence = baseConfidence(intent, metrics, dimensions, filters, timeHints) + 0.05;
-        confidence = Math.max(0.0, Math.min(confidence, 0.99));
+        double confidence = confidenceFromSignals(intent, tokenList, metrics, dimensions, filters, timeHints);
 
         return new QueryUnderstanding(
                 intent,
@@ -102,6 +102,7 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         if (containsAnyToken(tokens, COMPARISON_TERMS)) return QueryIntent.COMPARISON;
         if (!dimensions.isEmpty() && containsAnyToken(tokens, AGGREGATION_QUESTION_TERMS)) return QueryIntent.AGGREGATION;
         if (!metrics.isEmpty()) return QueryIntent.AGGREGATION;
+        if (containsAnyToken(tokens, DETAIL_QUESTION_TERMS)) return QueryIntent.DETAIL;
         if (containsAnyToken(tokens, DETAIL_TERMS)) return QueryIntent.DETAIL;
         return QueryIntent.UNKNOWN;
     }
@@ -205,12 +206,31 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         return left != null && right != null && similarity.apply(left, right) >= FUZZY_THRESHOLD;
     }
 
-    private double baseConfidence(QueryIntent intent, Collection<String> metrics, Collection<String> dimensions, Collection<String> filters, Collection<String> timeHints) {
-        double confidence = intent == QueryIntent.UNKNOWN ? 0.35 : 0.65;
-        confidence += Math.min(0.2, metrics.size() * 0.05);
-        confidence += Math.min(0.1, dimensions.size() * 0.05);
-        confidence += Math.min(0.1, (filters.size() + timeHints.size()) * 0.03);
-        return Math.max(0.0, Math.min(confidence, 0.95));
+    private double confidenceFromSignals(
+            QueryIntent intent,
+            List<String> tokenList,
+            Collection<String> metrics,
+            Collection<String> dimensions,
+            Collection<String> filters,
+            Collection<String> timeHints
+    ) {
+        if (tokenList == null || tokenList.isEmpty()) {
+            return 0.20;
+        }
+        String[] tags = posTagger.tag(tokenList.toArray(String[]::new));
+        int contentCount = 0;
+        for (String tag : tags) {
+            if (isAllowedPosForDimension(tag) || (tag != null && tag.toUpperCase(Locale.ROOT).contains("VERB"))) {
+                contentCount++;
+            }
+        }
+        double contentRatio = (double) contentCount / (double) tokenList.size();
+        double confidence = intent == QueryIntent.UNKNOWN ? 0.30 : 0.55;
+        confidence += Math.min(0.25, contentRatio * 0.25);
+        confidence += Math.min(0.15, metrics.size() * 0.05);
+        confidence += Math.min(0.12, dimensions.size() * 0.04);
+        confidence += Math.min(0.08, (filters.size() + timeHints.size()) * 0.02);
+        return Math.max(0.0, Math.min(confidence, 0.92));
     }
 
     private String normalize(String value) {
@@ -239,7 +259,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     }
 
 }
-
 
 
 

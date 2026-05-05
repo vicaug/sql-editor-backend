@@ -4,6 +4,7 @@ import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalConstraint
 import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalRequest;
 import com.victor.sql_api.assistant.metadata.infrastructure.MetadataCatalogGateway;
 import com.victor.sql_api.assistant.metadata.model.context.*;
+import com.victor.sql_api.assistant.nl2sql.model.QueryIntent;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import opennlp.tools.postag.POSTaggerME;
@@ -64,16 +65,18 @@ public class AskDataLikeMetadataRetrievalService {
         Map<String, List<ColumnMeta>> columnsByTable = allColumnsFromAllTables.stream()
                 .collect(Collectors.groupingBy(c -> tableKey(c.schemaName, c.tableName), LinkedHashMap::new, Collectors.toList()));
 
-        List<TableMeta> selectedTablesMeta = selectTables(
+        List<ScoredTable> selectedScoredTables = selectTables(
                 allTables,
                 columnsByTable,
                 questionTokens,
+                understanding,
                 constraints.maxTables()
         );
-        Map<String, Double> scoreByTableKey = selectedTablesMeta.stream()
+        List<TableMeta> selectedTablesMeta = selectedScoredTables.stream().map(st -> st.table).toList();
+        Map<String, Double> scoreByTableKey = selectedScoredTables.stream()
                 .collect(Collectors.toMap(
-                        t -> tableKey(t.schemaName, t.tableName),
-                        t -> clampScore(scoreTable(t, columnsByTable, questionTokens)),
+                        st -> tableKey(st.table.schemaName, st.table.tableName),
+                        st -> clampScore(st.finalScore),
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
@@ -141,10 +144,15 @@ public class AskDataLikeMetadataRetrievalService {
             hints.add(new RetrievalHint("RELATIONSHIP_HINT", "JOIN_PATH_AVAILABLE", 0.90));
         }
 
-        List<String> tableDetails = selectedTablesMeta.stream()
-                .map(table -> {
-                    String key = tableKey(table.schemaName, table.tableName);
-                    return key + " | score=" + format(scoreByTableKey.getOrDefault(key, 0.0)) + " | reason=semantic_match";
+        List<String> tableDetails = selectedScoredTables.stream()
+                .map(scored -> {
+                    String key = tableKey(scored.table.schemaName, scored.table.tableName);
+                    return key
+                            + " | score=" + format(clampScore(scored.finalScore))
+                            + " | base_table=" + format(scored.baseTableScore)
+                            + " | base_columns=" + format(scored.baseColumnsScore)
+                            + " | nlp_disambiguation=" + format(scored.disambiguationBoost)
+                            + " | reason=semantic_match";
                 })
                 .toList();
 
@@ -300,10 +308,11 @@ public class AskDataLikeMetadataRetrievalService {
         return result;
     }
 
-    private List<TableMeta> selectTables(
+    private List<ScoredTable> selectTables(
             List<TableMeta> allTables,
             Map<String, List<ColumnMeta>> columnsByTable,
             Set<String> questionTokens,
+            QueryUnderstanding understanding,
             int maxTables
     ) {
         int safeMaxTables = Math.max(0, maxTables);
@@ -312,18 +321,18 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         return allTables.stream()
-                .map(table -> new ScoredTable(table, scoreTable(table, columnsByTable, questionTokens)))
-                .filter(scored -> scored.score >= MIN_TABLE_SCORE_THRESHOLD)
-                .sorted(Comparator.comparingDouble((ScoredTable st) -> st.score).reversed())
+                .map(table -> scoreTable(table, columnsByTable, questionTokens, understanding))
+                .filter(scored -> scored.finalScore >= MIN_TABLE_SCORE_THRESHOLD)
+                .sorted(Comparator.comparingDouble((ScoredTable st) -> st.finalScore).reversed())
                 .limit(safeMaxTables)
-                .map(scored -> scored.table)
                 .toList();
     }
 
-    private double scoreTable(
+    private ScoredTable scoreTable(
             TableMeta table,
             Map<String, List<ColumnMeta>> columnsByTable,
-            Set<String> questionTokens
+            Set<String> questionTokens,
+            QueryUnderstanding understanding
     ) {
         String tableTokensText = normalizeText(table.tableName + " " + defaultString(table.tableDescription));
         Set<String> tableTokens = tokenize(tableTokensText);
@@ -339,7 +348,47 @@ public class AskDataLikeMetadataRetrievalService {
                 })
                 .max()
                 .orElse(0.0);
-        return (blendedTableScore * 0.55) + (columnsSemanticScore * 0.45);
+        double semanticDisambiguationBoost = semanticDisambiguationBoost(table, tableColumns, questionTokens, understanding);
+        double finalScore = (blendedTableScore * 0.50) + (columnsSemanticScore * 0.40) + semanticDisambiguationBoost;
+        return new ScoredTable(table, finalScore, blendedTableScore, columnsSemanticScore, semanticDisambiguationBoost);
+    }
+
+    private double semanticDisambiguationBoost(
+            TableMeta table,
+            List<ColumnMeta> tableColumns,
+            Set<String> questionTokens,
+            QueryUnderstanding understanding
+    ) {
+        double boost = 0.0;
+        String tableName = normalizeText(defaultString(table.tableName));
+        Set<String> tableNameTokens = tokenize(tableName);
+
+        long tableNameMatches = questionTokens.stream().filter(tableNameTokens::contains).count();
+        boost += Math.min(0.10, tableNameMatches * 0.03);
+
+        Set<String> columnNameTokens = new LinkedHashSet<>();
+        for (ColumnMeta column : tableColumns) {
+            columnNameTokens.addAll(tokenize(normalizeText(defaultString(column.columnName))));
+        }
+        long columnNameMatches = questionTokens.stream().filter(columnNameTokens::contains).count();
+        boost += Math.min(0.12, columnNameMatches * 0.03);
+
+        boolean hasDimensionSignals = understanding != null
+                && understanding.dimensions() != null
+                && !understanding.dimensions().isEmpty();
+        if (hasDimensionSignals) {
+            Set<String> dimensionTokens = understanding.dimensions().stream()
+                    .flatMap(d -> tokenize(normalizeText(d)).stream())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            long dimMatches = dimensionTokens.stream().filter(columnNameTokens::contains).count();
+            boost += Math.min(0.10, dimMatches * 0.03);
+        }
+
+        if (understanding != null && understanding.intent() == QueryIntent.DETAIL && tableNameTokens.contains("fato")) {
+            boost -= 0.03;
+        }
+
+        return boost;
     }
 
     private double scoreColumn(
@@ -578,7 +627,13 @@ public class AskDataLikeMetadataRetrievalService {
     private record TableMeta(String schemaName, String tableName, String tableDescription) {
     }
 
-    private record ScoredTable(TableMeta table, double score) {
+    private record ScoredTable(
+            TableMeta table,
+            double finalScore,
+            double baseTableScore,
+            double baseColumnsScore,
+            double disambiguationBoost
+    ) {
     }
 
     private record ColumnMeta(
