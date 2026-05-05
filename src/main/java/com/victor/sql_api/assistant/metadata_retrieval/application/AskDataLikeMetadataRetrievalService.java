@@ -7,8 +7,6 @@ import com.victor.sql_api.assistant.metadata.model.context.*;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import opennlp.tools.postag.POSTaggerME;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -21,13 +19,12 @@ public class AskDataLikeMetadataRetrievalService {
      * Source of truth for retrieval:
      * this service queries eqt_metadata tables and ranks relevant tables/columns/relationships.
      */
-    private static final Logger log = LoggerFactory.getLogger(AskDataLikeMetadataRetrievalService.class);
-
     private static final Set<String> STOPWORDS = Set.of(
             "a", "o", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "para", "por", "com",
             "um", "uma", "meu", "minha", "gere", "trazer", "calcule", "tambem", "quero", "que", "mostre"
     );
     private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
+    private static final double MIN_TABLE_SCORE_THRESHOLD = 0.20;
 
     private final MetadataCatalogGateway metadataCatalogGateway;
     private final POSTaggerME posTagger;
@@ -73,6 +70,13 @@ public class AskDataLikeMetadataRetrievalService {
                 questionTokens,
                 constraints.maxTables()
         );
+        Map<String, Double> scoreByTableKey = selectedTablesMeta.stream()
+                .collect(Collectors.toMap(
+                        t -> tableKey(t.schemaName, t.tableName),
+                        t -> clampScore(scoreTable(t, columnsByTable, questionTokens)),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
 
         Set<String> selectedTableKeys = selectedTablesMeta.stream()
                 .map(table -> tableKey(table.schemaName, table.tableName))
@@ -110,7 +114,7 @@ public class AskDataLikeMetadataRetrievalService {
                         table.schemaName,
                         table.tableName,
                         table.tableDescription,
-                        1.0
+                        scoreByTableKey.getOrDefault(tableKey(table.schemaName, table.tableName), 0.0)
                 ))
                 .toList();
 
@@ -138,8 +142,10 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         List<String> tableDetails = selectedTablesMeta.stream()
-                .map(table -> table.schemaName + "." + table.tableName
-                        + " | reason=semantic_match")
+                .map(table -> {
+                    String key = tableKey(table.schemaName, table.tableName);
+                    return key + " | score=" + format(scoreByTableKey.getOrDefault(key, 0.0)) + " | reason=semantic_match";
+                })
                 .toList();
 
         List<String> columnDetails = selectedColumnsMeta.stream()
@@ -306,8 +312,11 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         return allTables.stream()
-                .sorted(Comparator.comparingDouble((TableMeta t) -> scoreTable(t, columnsByTable, questionTokens)).reversed())
+                .map(table -> new ScoredTable(table, scoreTable(table, columnsByTable, questionTokens)))
+                .filter(scored -> scored.score >= MIN_TABLE_SCORE_THRESHOLD)
+                .sorted(Comparator.comparingDouble((ScoredTable st) -> st.score).reversed())
                 .limit(safeMaxTables)
+                .map(scored -> scored.table)
                 .toList();
     }
 
@@ -567,6 +576,9 @@ public class AskDataLikeMetadataRetrievalService {
     }
 
     private record TableMeta(String schemaName, String tableName, String tableDescription) {
+    }
+
+    private record ScoredTable(TableMeta table, double score) {
     }
 
     private record ColumnMeta(

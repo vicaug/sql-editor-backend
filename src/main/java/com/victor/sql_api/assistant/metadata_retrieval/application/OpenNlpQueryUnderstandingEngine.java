@@ -6,8 +6,7 @@ import org.apache.commons.text.similarity.JaroWinklerSimilarity;
 import opennlp.tools.postag.POSTaggerME;
 import opennlp.tools.tokenize.SimpleTokenizer;
 import opennlp.tools.util.Span;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
@@ -20,7 +19,6 @@ import java.util.regex.Pattern;
 @Service
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine {
-    private static final Logger log = LoggerFactory.getLogger(OpenNlpQueryUnderstandingEngine.class);
     private static final Pattern NON_ALNUM = Pattern.compile("[^a-z0-9 ]");
     private static final Pattern NLP_SAFE_CHARS = Pattern.compile("[^a-z0-9,;:.!?()\\- ]");
     private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
