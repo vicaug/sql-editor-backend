@@ -15,9 +15,7 @@ import java.util.List;
 @Service
 public class QueryUnderstandingRouter {
     private static final Logger log = LoggerFactory.getLogger(QueryUnderstandingRouter.class);
-    private static final double OPENNLP_CONFIDENCE_THRESHOLD = 0.55;
     private static final String OPENNLP_ENGINE = "opennlp";
-    private static final String HEURISTIC_ENGINE = "heuristic";
     private final List<QueryUnderstandingEngine> engines;
 
     public QueryUnderstandingRouter(List<QueryUnderstandingEngine> engines) {
@@ -57,52 +55,29 @@ public class QueryUnderstandingRouter {
         }
 
         QueryUnderstandingEngine openNlp = findEngine(OPENNLP_ENGINE);
-        QueryUnderstandingEngine heuristic = findEngine(HEURISTIC_ENGINE);
-
         if (openNlp != null && openNlp.isAvailable()) {
             QueryUnderstanding openNlpResult = openNlp.analyze(question);
-            if (openNlpResult != null && openNlpResult.confidence() >= OPENNLP_CONFIDENCE_THRESHOLD) {
+            if (openNlpResult != null) {
                 return new QueryUnderstandingDecision(openNlpResult, OPENNLP_ENGINE, false, null);
             }
-            if (heuristic != null && heuristic.isAvailable()) {
-                QueryUnderstanding heuristicResult = heuristic.analyze(question);
-                if (heuristicResult != null) {
-                    return new QueryUnderstandingDecision(
-                            heuristicResult,
-                            HEURISTIC_ENGINE,
-                            true,
-                            "opennlp_low_confidence"
-                    );
-                }
-            }
-            if (openNlpResult != null) {
-                return new QueryUnderstandingDecision(openNlpResult, OPENNLP_ENGINE, false, "opennlp_only_available");
-            }
-        }
-
-        if (heuristic != null && heuristic.isAvailable()) {
-            QueryUnderstanding heuristicResult = heuristic.analyze(question);
-            if (heuristicResult != null) {
-                return new QueryUnderstandingDecision(
-                        heuristicResult,
-                        HEURISTIC_ENGINE,
-                        true,
-                        "opennlp_unavailable"
-                );
-            }
-        }
-
-        for (QueryUnderstandingEngine engine : engines) {
-            if (!engine.isAvailable()) {
-                continue;
-            }
-            QueryUnderstanding result = engine.analyze(question);
-            if (result != null) {
-                return new QueryUnderstandingDecision(result, engine.name(), true, "generic_fallback_path");
-            }
+            log.warn("OpenNLP nao retornou resultado. Retornando UNKNOWN.");
+            return buildUnknownDecision("opennlp_failed");
         }
 
         log.warn("Nenhum QueryUnderstandingEngine disponivel. Retornando UNKNOWN.");
+        return buildUnknownDecision("opennlp_unavailable");
+    }
+
+    private QueryUnderstandingEngine findEngine(String name) {
+        for (QueryUnderstandingEngine engine : engines) {
+            if (engine.name() != null && engine.name().equalsIgnoreCase(name)) {
+                return engine;
+            }
+        }
+        return null;
+    }
+
+    private QueryUnderstandingDecision buildUnknownDecision(String reason) {
         QueryUnderstanding unknown = new QueryUnderstanding(
                 QueryIntent.UNKNOWN,
                 null,
@@ -114,16 +89,7 @@ public class QueryUnderstandingRouter {
                 false,
                 0.20
         );
-        return new QueryUnderstandingDecision(unknown, "none", true, "no_engine_available");
-    }
-
-    private QueryUnderstandingEngine findEngine(String name) {
-        for (QueryUnderstandingEngine engine : engines) {
-            if (engine.name() != null && engine.name().equalsIgnoreCase(name)) {
-                return engine;
-            }
-        }
-        return null;
+        return new QueryUnderstandingDecision(unknown, "none", true, reason);
     }
 }
 
