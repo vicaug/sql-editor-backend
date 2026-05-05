@@ -6,8 +6,16 @@ import com.victor.sql_api.assistant.metadata.infrastructure.MetadataCatalogGatew
 import com.victor.sql_api.assistant.metadata.model.context.*;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
+import opennlp.tools.postag.POSModel;
+import opennlp.tools.postag.POSTaggerME;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.text.Normalizer;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -18,15 +26,24 @@ public class AskDataLikeMetadataRetrievalService {
      * Source of truth for retrieval:
      * this service queries eqt_metadata tables and ranks relevant tables/columns/relationships.
      */
+    private static final Logger log = LoggerFactory.getLogger(AskDataLikeMetadataRetrievalService.class);
+    private static final String PT_POS_MODEL_CLASSPATH = "nlp/opennlp-pt-ud-gsd-pos-1.3-2.5.4.bin";
+
     private static final Set<String> STOPWORDS = Set.of(
             "a", "o", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "para", "por", "com",
             "um", "uma", "meu", "minha", "gere", "trazer", "calcule", "tambem", "quero", "que", "mostre"
     );
+    private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
 
     private final MetadataCatalogGateway metadataCatalogGateway;
+    private final POSTaggerME posTagger;
 
-    public AskDataLikeMetadataRetrievalService(MetadataCatalogGateway metadataCatalogGateway) {
+    public AskDataLikeMetadataRetrievalService(
+            MetadataCatalogGateway metadataCatalogGateway,
+            @Value("${app.nlp.pos-model-path:}") String posModelPath
+    ) {
         this.metadataCatalogGateway = metadataCatalogGateway;
+        this.posTagger = loadPosTagger(posModelPath);
     }
 
     public MetadataContext retrieve(RetrievalRequest request) {
@@ -306,16 +323,19 @@ public class AskDataLikeMetadataRetrievalService {
         String tableTokensText = normalizeText(table.tableName + " " + defaultString(table.tableDescription));
         Set<String> tableTokens = tokenize(tableTokensText);
         double semanticScore = overlapScore(questionTokens, tableTokens);
+        double nlpScore = openNlpSimilarity(questionTokens, tableTokensText);
+        double blendedTableScore = blendedSimilarity(semanticScore, nlpScore);
         List<ColumnMeta> tableColumns = columnsByTable.getOrDefault(tableKey(table.schemaName, table.tableName), List.of());
         double columnsSemanticScore = tableColumns.stream()
-                .mapToDouble(col -> overlapScore(
-                        questionTokens,
-                        tokenize(normalizeText(col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole)))
-                ))
+                .mapToDouble(col -> {
+                    String colText = normalizeText(col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole));
+                    double colOverlapScore = overlapScore(questionTokens, tokenize(colText));
+                    return blendedSimilarity(colOverlapScore, openNlpSimilarity(questionTokens, colText));
+                })
                 .max()
                 .orElse(0.0);
         double btBoost = forcedTableKeys.contains(tableKey(table.schemaName, table.tableName)) ? 0.35 : 0.0;
-        return (semanticScore * 0.55) + (columnsSemanticScore * 0.45) + btBoost;
+        return (blendedTableScore * 0.55) + (columnsSemanticScore * 0.45) + btBoost;
     }
 
     private double scoreColumn(
@@ -327,10 +347,12 @@ public class AskDataLikeMetadataRetrievalService {
         String columnTokensText = normalizeText(column.columnName + " " + defaultString(column.columnComment) + " " + defaultString(column.semanticRole));
         Set<String> columnTokens = tokenize(columnTokensText);
         double semanticScore = overlapScore(questionTokens, columnTokens);
+        double nlpScore = openNlpSimilarity(questionTokens, columnTokensText);
+        double blendedScore = blendedSimilarity(semanticScore, nlpScore);
         double btBoost = forcedColumnKeys.contains(columnKey(column.schemaName, column.tableName, column.columnName)) ? 0.30 : 0.0;
         double structuralBoost = (column.primaryKey || column.foreignKey) ? 0.10 : 0.0;
         double roleBoost = matchesUnderstandingRole(column.semanticRole, understanding) ? 0.10 : 0.0;
-        return semanticScore + btBoost + structuralBoost + roleBoost;
+        return blendedScore + btBoost + structuralBoost + roleBoost;
     }
 
     private double overlapScore(Set<String> left, Set<String> right) {
@@ -344,6 +366,47 @@ public class AskDataLikeMetadataRetrievalService {
             }
         }
         return (double) matches / (double) left.size();
+    }
+
+    private double blendedSimilarity(double overlapScore, double nlpScore) {
+        if (nlpScore <= 0.0) {
+            return overlapScore;
+        }
+        return (overlapScore * 0.60) + (nlpScore * 0.40);
+    }
+
+    private double openNlpSimilarity(Set<String> normalizedQuestionTokens, String metadataText) {
+        if (posTagger == null || normalizedQuestionTokens == null || normalizedQuestionTokens.isEmpty()) {
+            return 0.0;
+        }
+        Set<String> questionContentTokens = filterContentTokensWithPos(normalizedQuestionTokens);
+        Set<String> metadataContentTokens = filterContentTokensWithPos(tokenize(metadataText));
+        return overlapScore(questionContentTokens, metadataContentTokens);
+    }
+
+    private Set<String> filterContentTokensWithPos(Set<String> tokens) {
+        if (tokens == null || tokens.isEmpty() || posTagger == null) {
+            return Set.of();
+        }
+        List<String> tokenList = new ArrayList<>(tokens);
+        String[] tags = posTagger.tag(tokenList.toArray(String[]::new));
+        LinkedHashSet<String> filtered = new LinkedHashSet<>();
+        for (int i = 0; i < tokenList.size(); i++) {
+            String tag = tags[i] == null ? "" : tags[i].toUpperCase(Locale.ROOT);
+            if (containsAnyPosTag(tag)) {
+                filtered.add(tokenList.get(i));
+            }
+        }
+        return filtered;
+    }
+
+    private boolean containsAnyPosTag(String tag) {
+        for (String contentTag : CONTENT_POS_TAGS) {
+            if (tag.contains(contentTag)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean matchesUnderstandingRole(String semanticRole, QueryUnderstanding understanding) {
@@ -504,6 +567,27 @@ public class AskDataLikeMetadataRetrievalService {
 
     private String format(double value) {
         return String.format(Locale.ROOT, "%.3f", value);
+    }
+
+    private POSTaggerME loadPosTagger(String externalPath) {
+        if (externalPath != null && !externalPath.isBlank()) {
+            try (InputStream input = new FileInputStream(externalPath.trim())) {
+                POSModel model = new POSModel(input);
+                log.info("Modelo POS OpenNLP carregado via application.properties: {}", externalPath.trim());
+                return new POSTaggerME(model);
+            } catch (Exception ex) {
+                log.warn("Falha ao carregar modelo POS OpenNLP via app.nlp.pos-model-path={}. Motivo: {}", externalPath.trim(), ex.getMessage());
+            }
+        }
+
+        try (InputStream input = new ClassPathResource(PT_POS_MODEL_CLASSPATH).getInputStream()) {
+            POSModel model = new POSModel(input);
+            log.info("Modelo POS OpenNLP carregado via classpath: {}", PT_POS_MODEL_CLASSPATH);
+            return new POSTaggerME(model);
+        } catch (Exception ex) {
+            log.info("Modelo POS OpenNLP indisponivel no classpath ({}).", PT_POS_MODEL_CLASSPATH);
+            return null;
+        }
     }
 
     private record TableMeta(String schemaName, String tableName, String tableDescription) {
