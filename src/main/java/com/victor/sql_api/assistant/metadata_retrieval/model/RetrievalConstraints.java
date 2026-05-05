@@ -7,7 +7,12 @@ public record RetrievalConstraints(
         int maxTotalColumns
 ) {
     public static RetrievalConstraints defaults() {
-        return new RetrievalConstraints(8, 8, 8, 24);
+        return new RetrievalConstraints(
+            12, 
+            20, 
+            12, 
+            24
+        );
     }
 }
 
