@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class QueryUnderstandingServiceTest {
 
-    private final QueryUnderstandingService service = new QueryUnderstandingService(
+    private final QueryUnderstandingRouter service = new QueryUnderstandingRouter(
             java.util.List.of(new HeuristicQueryUnderstandingEngine())
     );
 
