@@ -6,7 +6,7 @@ public record RetrievalRequest(
         String queryUnderstandingEngine
 ) {
     public RetrievalConstraints effectiveConstraints() {
-        return constraints == null ? RetrievalConstraints.defaults() : constraints;
+        return constraints == null ? RetrievalConstraints.defaults() : constraints.normalized();
     }
 }
 

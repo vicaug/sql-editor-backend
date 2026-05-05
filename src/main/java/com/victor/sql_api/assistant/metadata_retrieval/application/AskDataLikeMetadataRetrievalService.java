@@ -24,10 +24,6 @@ public class AskDataLikeMetadataRetrievalService {
             "um", "uma", "meu", "minha", "gere", "trazer", "calcule", "tambem", "quero", "que", "mostre"
     );
     private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
-    // OpenNLP-driven retrieval strategy constants
-    private static final double MIN_TABLE_SCORE_THRESHOLD = 0.20;
-    private static final double MIN_COLUMN_SCORE_THRESHOLD = 0.05;
-
     private final MetadataCatalogGateway metadataCatalogGateway;
     private final POSTaggerME posTagger;
 
@@ -70,7 +66,8 @@ public class AskDataLikeMetadataRetrievalService {
                 allTables,
                 columnsByTable,
                 questionTokens,
-                constraints.maxTables()
+                constraints.maxTables(),
+                constraints.minTableScoreThreshold()
         );
         List<TableMeta> selectedTablesMeta = selectedScoredTables.stream().map(st -> st.table).toList();
         Map<String, Double> scoreByTableKey = selectedScoredTables.stream()
@@ -93,7 +90,8 @@ public class AskDataLikeMetadataRetrievalService {
                 columnsInSelectedTables,
                 questionTokens,
                 constraints.maxColumnsPerTable(),
-                constraints.maxTotalColumns()
+                constraints.maxTotalColumns(),
+                constraints.minColumnScoreThreshold()
         );
         List<ColumnMeta> selectedColumnsMeta = selectedScoredColumns.stream().map(sc -> sc.column).toList();
         Map<String, Double> scoreByColumnKey = selectedScoredColumns.stream()
@@ -275,7 +273,8 @@ public class AskDataLikeMetadataRetrievalService {
             List<ColumnMeta> allColumns,
             Set<String> questionTokens,
             int maxColumnsPerTable,
-            int maxTotalColumns
+            int maxTotalColumns,
+            double minColumnScoreThreshold
     ) {
         if (allColumns.isEmpty()) {
             return List.of();
@@ -283,7 +282,7 @@ public class AskDataLikeMetadataRetrievalService {
 
         List<ScoredColumn> priority = allColumns.stream()
                 .map(column -> new ScoredColumn(column, scoreColumn(column, questionTokens)))
-                .filter(scored -> scored.score >= MIN_COLUMN_SCORE_THRESHOLD)
+                .filter(scored -> scored.score >= minColumnScoreThreshold)
                 .sorted(Comparator.comparingDouble((ScoredColumn sc) -> sc.score).reversed())
                 .toList();
 
@@ -313,7 +312,8 @@ public class AskDataLikeMetadataRetrievalService {
             List<TableMeta> allTables,
             Map<String, List<ColumnMeta>> columnsByTable,
             Set<String> questionTokens,
-            int maxTables
+            int maxTables,
+            double minTableScoreThreshold
     ) {
         int safeMaxTables = Math.max(0, maxTables);
         if (safeMaxTables == 0 || allTables.isEmpty()) {
@@ -322,7 +322,7 @@ public class AskDataLikeMetadataRetrievalService {
 
         return allTables.stream()
                 .map(table -> scoreTable(table, columnsByTable, questionTokens))
-                .filter(scored -> scored.finalScore >= MIN_TABLE_SCORE_THRESHOLD)
+                .filter(scored -> scored.finalScore >= minTableScoreThreshold)
                 .sorted(Comparator.comparingDouble((ScoredTable st) -> st.finalScore).reversed())
                 .limit(safeMaxTables)
                 .toList();
