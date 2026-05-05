@@ -26,6 +26,7 @@ public class AskDataLikeMetadataRetrievalService {
     );
     private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
     private static final double MIN_TABLE_SCORE_THRESHOLD = 0.20;
+    private static final double MIN_COLUMN_SCORE_THRESHOLD = 0.05;
 
     private final MetadataCatalogGateway metadataCatalogGateway;
     private final POSTaggerME posTagger;
@@ -89,18 +90,18 @@ public class AskDataLikeMetadataRetrievalService {
                 .filter(c -> selectedTableKeys.contains(tableKey(c.schemaName, c.tableName)))
                 .toList();
 
-        List<ColumnMeta> selectedColumnsMeta = selectColumns(
+        List<ScoredColumn> selectedScoredColumns = selectColumns(
                 columnsInSelectedTables,
                 questionTokens,
                 understanding,
                 constraints.maxColumnsPerTable(),
                 constraints.maxTotalColumns()
         );
-
-        Map<String, Double> scoreByColumnKey = selectedColumnsMeta.stream()
+        List<ColumnMeta> selectedColumnsMeta = selectedScoredColumns.stream().map(sc -> sc.column).toList();
+        Map<String, Double> scoreByColumnKey = selectedScoredColumns.stream()
                 .collect(Collectors.toMap(
-                        c -> columnKey(c.schemaName, c.tableName, c.columnName),
-                        c -> clampScore(scoreColumn(c, questionTokens, understanding)),
+                        sc -> columnKey(sc.column.schemaName, sc.column.tableName, sc.column.columnName),
+                        sc -> clampScore(sc.score),
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
@@ -121,10 +122,10 @@ public class AskDataLikeMetadataRetrievalService {
                 ))
                 .toList();
 
-        List<RelevantColumn> relevantColumns = selectedColumnsMeta.stream()
-                .map(column -> {
-                    String key = columnKey(column.schemaName, column.tableName, column.columnName);
-                    double score = scoreByColumnKey.getOrDefault(key, 0.0);
+        List<RelevantColumn> relevantColumns = selectedScoredColumns.stream()
+                .map(scored -> {
+                    ColumnMeta column = scored.column;
+                    double score = clampScore(scored.score);
                     return new RelevantColumn(
                             column.schemaName,
                             column.tableName,
@@ -159,7 +160,8 @@ public class AskDataLikeMetadataRetrievalService {
         List<String> columnDetails = selectedColumnsMeta.stream()
                 .map(column -> {
                     String key = columnKey(column.schemaName, column.tableName, column.columnName);
-                    return key + " | score=" + format(scoreByColumnKey.getOrDefault(key, 0.0)) + " | reason=structural_context_column";
+                    double score = scoreByColumnKey.getOrDefault(key, 0.0);
+                    return key + " | score=" + format(score) + " | reason=structural_context_column";
                 })
                 .toList();
 
@@ -272,7 +274,7 @@ public class AskDataLikeMetadataRetrievalService {
         return result;
     }
 
-    private List<ColumnMeta> selectColumns(
+    private List<ScoredColumn> selectColumns(
             List<ColumnMeta> allColumns,
             Set<String> questionTokens,
             QueryUnderstanding understanding,
@@ -283,25 +285,28 @@ public class AskDataLikeMetadataRetrievalService {
             return List.of();
         }
 
-        List<ColumnMeta> priority = allColumns.stream()
-                .sorted(Comparator.comparingDouble((ColumnMeta c) -> scoreColumn(c, questionTokens, understanding)).reversed())
+        List<ScoredColumn> priority = allColumns.stream()
+                .map(column -> new ScoredColumn(column, scoreColumn(column, questionTokens, understanding)))
+                .filter(scored -> scored.score >= MIN_COLUMN_SCORE_THRESHOLD)
+                .sorted(Comparator.comparingDouble((ScoredColumn sc) -> sc.score).reversed())
                 .toList();
 
         int safePerTable = Math.max(0, maxColumnsPerTable);
         int safeTotal = Math.max(0, maxTotalColumns);
         Map<String, Integer> countByTable = new HashMap<>();
-        List<ColumnMeta> result = new ArrayList<>();
+        List<ScoredColumn> result = new ArrayList<>();
 
-        for (ColumnMeta column : priority) {
+        for (ScoredColumn scored : priority) {
             if (safeTotal > 0 && result.size() >= safeTotal) {
                 break;
             }
+            ColumnMeta column = scored.column;
             String tableKey = tableKey(column.schemaName, column.tableName);
             int tableCount = countByTable.getOrDefault(tableKey, 0);
             if (safePerTable > 0 && tableCount >= safePerTable) {
                 continue;
             }
-            result.add(column);
+            result.add(scored);
             countByTable.put(tableKey, tableCount + 1);
         }
 
@@ -646,6 +651,9 @@ public class AskDataLikeMetadataRetrievalService {
             boolean primaryKey,
             boolean foreignKey
     ) {
+    }
+
+    private record ScoredColumn(ColumnMeta column, double score) {
     }
 
     private record RelationshipMeta(

@@ -62,6 +62,9 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
 
     @Override
     public QueryUnderstanding analyze(String question) {
+        if (posTagger == null) {
+            return unavailableUnderstanding(question);
+        }
         String lexicalNormalized = normalize(question);
         String nlpNormalized = normalizeForNlp(question);
         List<String> tokenList = tokenize(nlpNormalized);
@@ -94,6 +97,29 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
                 requiresAggregation,
                 requiresJoin,
                 confidence
+        );
+    }
+
+    private QueryUnderstanding unavailableUnderstanding(String question) {
+        String lexicalNormalized = normalize(question);
+        LinkedHashSet<String> filters = new LinkedHashSet<>();
+        LinkedHashSet<String> timeHints = new LinkedHashSet<>();
+        Matcher yearMatcher = YEAR_PATTERN.matcher(lexicalNormalized);
+        while (yearMatcher.find()) {
+            String year = yearMatcher.group(1);
+            filters.add("year=" + year);
+            timeHints.add(year);
+        }
+        return new QueryUnderstanding(
+                QueryIntent.UNKNOWN,
+                null,
+                List.of(),
+                List.of(),
+                List.copyOf(filters),
+                List.copyOf(timeHints),
+                false,
+                false,
+                0.20
         );
     }
 
@@ -259,7 +285,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     }
 
 }
-
 
 
 
