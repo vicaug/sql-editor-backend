@@ -47,7 +47,7 @@ POST /assistant/text-to-sql-query
         -> Nl2SqlOrchestrator (orquestra o pipeline)
           1) MetadataContextProviderRouter
              -> AskDataLikeContextProvider
-                -> QueryUnderstandingRouter (opennlp/heuristic)
+                -> QueryUnderstandingRouter (opennlp)
                 -> AskDataLikeMetadataRetrievalService
                    -> MetadataCatalogGateway (eqt_metadata)
                 -> PromptContextBuilder
