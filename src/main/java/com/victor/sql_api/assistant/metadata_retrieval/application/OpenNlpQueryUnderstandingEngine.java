@@ -2,7 +2,6 @@ package com.victor.sql_api.assistant.metadata_retrieval.application;
 
 import com.victor.sql_api.assistant.nl2sql.model.QueryIntent;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
-import org.apache.commons.text.similarity.JaroWinklerSimilarity;
 import opennlp.tools.postag.POSTaggerME;
 import opennlp.tools.tokenize.SimpleTokenizer;
 import opennlp.tools.util.Span;
@@ -24,14 +23,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
     private static final Pattern YEAR_PATTERN = Pattern.compile("\\b(20\\d{2})\\b");
 
-    private static final Set<String> AGGREGATION_TERMS = Set.of(
-            "total", "soma", "somar", "quantidade", "qtd", "numero", "media", "avg", "count", "contagem", "maximo", "minimo", "percentual", "taxa"
-    );
-    private static final Set<String> AGGREGATION_QUESTION_TERMS = Set.of("quanto", "quantos", "quantas", "numero");
-    private static final Set<String> COMPARISON_TERMS = Set.of("comparar", "versus", "vs", "diferenca", "maior", "menor");
-    private static final Set<String> TREND_TERMS = Set.of("evolucao", "mensal", "semanal", "diario", "anual", "historico", "ao longo");
-    private static final Set<String> DETAIL_TERMS = Set.of("detalhe", "listar", "lista", "exibir", "mostrar");
-    private static final Set<String> DETAIL_QUESTION_TERMS = Set.of("qual", "quais", "quem", "onde");
     private static final Set<String> GROUP_CONNECTORS = Set.of("por");
     private static final Set<String> DIMENSION_SEPARATORS = Set.of(",", "e", "vs", "versus");
     private static final Set<String> CLAUSE_BREAKERS = Set.of(
@@ -40,9 +31,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     private static final Set<String> DIMENSION_STOPWORDS = Set.of(
             "o", "a", "os", "as", "um", "uma", "de", "do", "da", "dos", "das", "por"
     );
-    private static final double FUZZY_THRESHOLD = 0.90;
-
-    private final JaroWinklerSimilarity similarity = new JaroWinklerSimilarity();
     private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
     private final POSTaggerME posTagger;
 
@@ -68,10 +56,10 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         String lexicalNormalized = normalize(question);
         String nlpNormalized = normalizeForNlp(question);
         List<String> tokenList = tokenize(nlpNormalized);
-        Set<String> tokens = new LinkedHashSet<>(tokenList);
+        String[] tags = posTagger.tag(tokenList.toArray(String[]::new));
 
-        LinkedHashSet<String> metrics = pickTokens(tokens, AGGREGATION_TERMS);
-        LinkedHashSet<String> dimensions = detectDimensionsWithPos(tokenList);
+        LinkedHashSet<String> metrics = detectMetricsWithPos(tokenList, tags);
+        LinkedHashSet<String> dimensions = detectDimensionsWithPos(tokenList, tags);
         LinkedHashSet<String> filters = new LinkedHashSet<>();
         LinkedHashSet<String> timeHints = new LinkedHashSet<>();
         Matcher yearMatcher = YEAR_PATTERN.matcher(lexicalNormalized);
@@ -81,11 +69,11 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
             timeHints.add(year);
         }
 
-        QueryIntent intent = detectIntent(lexicalNormalized, tokens, metrics, dimensions);
+        QueryIntent intent = detectIntent(metrics, dimensions, timeHints);
         boolean requiresAggregation = intent == QueryIntent.AGGREGATION || intent == QueryIntent.TREND || !metrics.isEmpty();
         boolean requiresJoin = !dimensions.isEmpty();
 
-        double confidence = confidenceFromSignals(intent, tokenList, metrics, dimensions, filters, timeHints);
+        double confidence = confidenceFromSignals(intent, tokenList, tags, metrics, dimensions, filters, timeHints);
 
         return new QueryUnderstanding(
                 intent,
@@ -123,21 +111,17 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         );
     }
 
-    private QueryIntent detectIntent(String normalized, Set<String> tokens, Set<String> metrics, Set<String> dimensions) {
-        if (containsAnyPhrase(normalized, TREND_TERMS) || containsAnyToken(tokens, TREND_TERMS)) return QueryIntent.TREND;
-        if (containsAnyToken(tokens, COMPARISON_TERMS)) return QueryIntent.COMPARISON;
-        if (!dimensions.isEmpty() && containsAnyToken(tokens, AGGREGATION_QUESTION_TERMS)) return QueryIntent.AGGREGATION;
+    private QueryIntent detectIntent(Set<String> metrics, Set<String> dimensions, Set<String> timeHints) {
+        if (!timeHints.isEmpty() && !metrics.isEmpty()) return QueryIntent.TREND;
         if (!metrics.isEmpty()) return QueryIntent.AGGREGATION;
-        if (containsAnyToken(tokens, DETAIL_QUESTION_TERMS)) return QueryIntent.DETAIL;
-        if (containsAnyToken(tokens, DETAIL_TERMS)) return QueryIntent.DETAIL;
+        if (!dimensions.isEmpty()) return QueryIntent.DETAIL;
         return QueryIntent.UNKNOWN;
     }
 
-    private LinkedHashSet<String> detectDimensionsWithPos(List<String> tokens) {
+    private LinkedHashSet<String> detectDimensionsWithPos(List<String> tokens, String[] tags) {
         LinkedHashSet<String> dimensions = new LinkedHashSet<>();
         List<String> currentDimensionTokens = new ArrayList<>();
         boolean collecting = false;
-        String[] tags = posTagger.tag(tokens.toArray(String[]::new));
 
         for (int i = 0; i < tokens.size(); i++) {
             String token = tokens.get(i);
@@ -168,6 +152,40 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         flushDimension(currentDimensionTokens, dimensions);
         if (!dimensions.isEmpty()) dimensions.add("agrupamento");
         return dimensions;
+    }
+
+    private LinkedHashSet<String> detectMetricsWithPos(List<String> tokens, String[] tags) {
+        LinkedHashSet<String> metrics = new LinkedHashSet<>();
+        boolean insideGroupClause = false;
+        for (int i = 0; i < tokens.size(); i++) {
+            String token = tokens.get(i);
+            String tag = tags[i] == null ? "" : tags[i].toUpperCase(Locale.ROOT);
+
+            if (GROUP_CONNECTORS.contains(token)) {
+                insideGroupClause = true;
+                continue;
+            }
+
+            if (isHardBoundaryToken(token) || isPunctuation(token) || DIMENSION_SEPARATORS.contains(token)) {
+                insideGroupClause = false;
+                continue;
+            }
+
+            if (insideGroupClause) {
+                continue;
+            }
+
+            if (tag.contains("NUM")) {
+                metrics.add(token);
+                continue;
+            }
+
+            String previousTag = i > 0 && tags[i - 1] != null ? tags[i - 1].toUpperCase(Locale.ROOT) : "";
+            if (tag.contains("NOUN") && previousTag.contains("VERB")) {
+                metrics.add(token);
+            }
+        }
+        return metrics;
     }
 
     private boolean isAllowedPosForDimension(String tag) {
@@ -206,35 +224,10 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         return token != null && CLAUSE_BREAKERS.contains(token);
     }
 
-    private LinkedHashSet<String> pickTokens(Set<String> tokens, Set<String> dictionary) {
-        LinkedHashSet<String> result = new LinkedHashSet<>();
-        for (String token : tokens) {
-            if (dictionary.contains(token) || isSimilarToAny(token, dictionary)) result.add(token);
-        }
-        return result;
-    }
-
-    private boolean containsAnyPhrase(String normalized, Set<String> candidates) {
-        return candidates.stream().anyMatch(normalized::contains);
-    }
-
-    private boolean containsAnyToken(Set<String> tokens, Set<String> candidates) {
-        return candidates.stream().anyMatch(candidate ->
-                tokens.contains(candidate) || tokens.stream().anyMatch(token -> isSimilar(token, candidate))
-        );
-    }
-
-    private boolean isSimilarToAny(String value, Set<String> candidates) {
-        return candidates.stream().anyMatch(candidate -> isSimilar(value, candidate));
-    }
-
-    private boolean isSimilar(String left, String right) {
-        return left != null && right != null && similarity.apply(left, right) >= FUZZY_THRESHOLD;
-    }
-
     private double confidenceFromSignals(
             QueryIntent intent,
             List<String> tokenList,
+            String[] tags,
             Collection<String> metrics,
             Collection<String> dimensions,
             Collection<String> filters,
@@ -243,7 +236,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         if (tokenList == null || tokenList.isEmpty()) {
             return 0.20;
         }
-        String[] tags = posTagger.tag(tokenList.toArray(String[]::new));
         int contentCount = 0;
         for (String tag : tags) {
             if (isAllowedPosForDimension(tag) || (tag != null && tag.toUpperCase(Locale.ROOT).contains("VERB"))) {
@@ -285,8 +277,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     }
 
 }
-
-
 
 
 

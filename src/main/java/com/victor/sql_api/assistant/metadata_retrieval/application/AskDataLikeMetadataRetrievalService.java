@@ -4,7 +4,6 @@ import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalConstraint
 import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalRequest;
 import com.victor.sql_api.assistant.metadata.infrastructure.MetadataCatalogGateway;
 import com.victor.sql_api.assistant.metadata.model.context.*;
-import com.victor.sql_api.assistant.nl2sql.model.QueryIntent;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import opennlp.tools.postag.POSTaggerME;
@@ -25,6 +24,7 @@ public class AskDataLikeMetadataRetrievalService {
             "um", "uma", "meu", "minha", "gere", "trazer", "calcule", "tambem", "quero", "que", "mostre"
     );
     private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
+    // OpenNLP-driven retrieval strategy constants
     private static final double MIN_TABLE_SCORE_THRESHOLD = 0.20;
     private static final double MIN_COLUMN_SCORE_THRESHOLD = 0.05;
 
@@ -70,7 +70,6 @@ public class AskDataLikeMetadataRetrievalService {
                 allTables,
                 columnsByTable,
                 questionTokens,
-                understanding,
                 constraints.maxTables()
         );
         List<TableMeta> selectedTablesMeta = selectedScoredTables.stream().map(st -> st.table).toList();
@@ -93,7 +92,6 @@ public class AskDataLikeMetadataRetrievalService {
         List<ScoredColumn> selectedScoredColumns = selectColumns(
                 columnsInSelectedTables,
                 questionTokens,
-                understanding,
                 constraints.maxColumnsPerTable(),
                 constraints.maxTotalColumns()
         );
@@ -150,10 +148,9 @@ public class AskDataLikeMetadataRetrievalService {
                     String key = tableKey(scored.table.schemaName, scored.table.tableName);
                     return key
                             + " | score=" + format(clampScore(scored.finalScore))
-                            + " | base_table=" + format(scored.baseTableScore)
-                            + " | base_columns=" + format(scored.baseColumnsScore)
-                            + " | nlp_disambiguation=" + format(scored.disambiguationBoost)
-                            + " | reason=semantic_match";
+                            + " | nlp_table=" + format(scored.baseTableScore)
+                            + " | nlp_columns=" + format(scored.baseColumnsScore)
+                            + " | reason=opennlp_similarity";
                 })
                 .toList();
 
@@ -161,7 +158,7 @@ public class AskDataLikeMetadataRetrievalService {
                 .map(column -> {
                     String key = columnKey(column.schemaName, column.tableName, column.columnName);
                     double score = scoreByColumnKey.getOrDefault(key, 0.0);
-                    return key + " | score=" + format(score) + " | reason=structural_context_column";
+                    return key + " | score=" + format(score) + " | reason=opennlp_similarity";
                 })
                 .toList();
 
@@ -277,7 +274,6 @@ public class AskDataLikeMetadataRetrievalService {
     private List<ScoredColumn> selectColumns(
             List<ColumnMeta> allColumns,
             Set<String> questionTokens,
-            QueryUnderstanding understanding,
             int maxColumnsPerTable,
             int maxTotalColumns
     ) {
@@ -286,7 +282,7 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         List<ScoredColumn> priority = allColumns.stream()
-                .map(column -> new ScoredColumn(column, scoreColumn(column, questionTokens, understanding)))
+                .map(column -> new ScoredColumn(column, scoreColumn(column, questionTokens)))
                 .filter(scored -> scored.score >= MIN_COLUMN_SCORE_THRESHOLD)
                 .sorted(Comparator.comparingDouble((ScoredColumn sc) -> sc.score).reversed())
                 .toList();
@@ -317,7 +313,6 @@ public class AskDataLikeMetadataRetrievalService {
             List<TableMeta> allTables,
             Map<String, List<ColumnMeta>> columnsByTable,
             Set<String> questionTokens,
-            QueryUnderstanding understanding,
             int maxTables
     ) {
         int safeMaxTables = Math.max(0, maxTables);
@@ -326,7 +321,7 @@ public class AskDataLikeMetadataRetrievalService {
         }
 
         return allTables.stream()
-                .map(table -> scoreTable(table, columnsByTable, questionTokens, understanding))
+                .map(table -> scoreTable(table, columnsByTable, questionTokens))
                 .filter(scored -> scored.finalScore >= MIN_TABLE_SCORE_THRESHOLD)
                 .sorted(Comparator.comparingDouble((ScoredTable st) -> st.finalScore).reversed())
                 .limit(safeMaxTables)
@@ -336,79 +331,28 @@ public class AskDataLikeMetadataRetrievalService {
     private ScoredTable scoreTable(
             TableMeta table,
             Map<String, List<ColumnMeta>> columnsByTable,
-            Set<String> questionTokens,
-            QueryUnderstanding understanding
+            Set<String> questionTokens
     ) {
         String tableTokensText = normalizeText(table.tableName + " " + defaultString(table.tableDescription));
-        Set<String> tableTokens = tokenize(tableTokensText);
-        double semanticScore = overlapScore(questionTokens, tableTokens);
-        double nlpScore = openNlpSimilarity(questionTokens, tableTokensText);
-        double blendedTableScore = blendedSimilarity(semanticScore, nlpScore);
+        double tableNlpScore = openNlpSimilarity(questionTokens, tableTokensText);
         List<ColumnMeta> tableColumns = columnsByTable.getOrDefault(tableKey(table.schemaName, table.tableName), List.of());
-        double columnsSemanticScore = tableColumns.stream()
+        double columnsNlpScore = tableColumns.stream()
                 .mapToDouble(col -> {
                     String colText = normalizeText(col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole));
-                    double colOverlapScore = overlapScore(questionTokens, tokenize(colText));
-                    return blendedSimilarity(colOverlapScore, openNlpSimilarity(questionTokens, colText));
+                    return openNlpSimilarity(questionTokens, colText);
                 })
                 .max()
                 .orElse(0.0);
-        double semanticDisambiguationBoost = semanticDisambiguationBoost(table, tableColumns, questionTokens, understanding);
-        double finalScore = (blendedTableScore * 0.50) + (columnsSemanticScore * 0.40) + semanticDisambiguationBoost;
-        return new ScoredTable(table, finalScore, blendedTableScore, columnsSemanticScore, semanticDisambiguationBoost);
-    }
-
-    private double semanticDisambiguationBoost(
-            TableMeta table,
-            List<ColumnMeta> tableColumns,
-            Set<String> questionTokens,
-            QueryUnderstanding understanding
-    ) {
-        double boost = 0.0;
-        String tableName = normalizeText(defaultString(table.tableName));
-        Set<String> tableNameTokens = tokenize(tableName);
-
-        long tableNameMatches = questionTokens.stream().filter(tableNameTokens::contains).count();
-        boost += Math.min(0.10, tableNameMatches * 0.03);
-
-        Set<String> columnNameTokens = new LinkedHashSet<>();
-        for (ColumnMeta column : tableColumns) {
-            columnNameTokens.addAll(tokenize(normalizeText(defaultString(column.columnName))));
-        }
-        long columnNameMatches = questionTokens.stream().filter(columnNameTokens::contains).count();
-        boost += Math.min(0.12, columnNameMatches * 0.03);
-
-        boolean hasDimensionSignals = understanding != null
-                && understanding.dimensions() != null
-                && !understanding.dimensions().isEmpty();
-        if (hasDimensionSignals) {
-            Set<String> dimensionTokens = understanding.dimensions().stream()
-                    .flatMap(d -> tokenize(normalizeText(d)).stream())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-            long dimMatches = dimensionTokens.stream().filter(columnNameTokens::contains).count();
-            boost += Math.min(0.10, dimMatches * 0.03);
-        }
-
-        if (understanding != null && understanding.intent() == QueryIntent.DETAIL && tableNameTokens.contains("fato")) {
-            boost -= 0.03;
-        }
-
-        return boost;
+        double finalScore = Math.max(tableNlpScore, columnsNlpScore);
+        return new ScoredTable(table, finalScore, tableNlpScore, columnsNlpScore);
     }
 
     private double scoreColumn(
             ColumnMeta column,
-            Set<String> questionTokens,
-            QueryUnderstanding understanding
+            Set<String> questionTokens
     ) {
         String columnTokensText = normalizeText(column.columnName + " " + defaultString(column.columnComment) + " " + defaultString(column.semanticRole));
-        Set<String> columnTokens = tokenize(columnTokensText);
-        double semanticScore = overlapScore(questionTokens, columnTokens);
-        double nlpScore = openNlpSimilarity(questionTokens, columnTokensText);
-        double blendedScore = blendedSimilarity(semanticScore, nlpScore);
-        double structuralBoost = (column.primaryKey || column.foreignKey) ? 0.10 : 0.0;
-        double roleBoost = matchesUnderstandingRole(column.semanticRole, understanding) ? 0.10 : 0.0;
-        return blendedScore + structuralBoost + roleBoost;
+        return openNlpSimilarity(questionTokens, columnTokensText);
     }
 
     private double overlapScore(Set<String> left, Set<String> right) {
@@ -422,13 +366,6 @@ public class AskDataLikeMetadataRetrievalService {
             }
         }
         return (double) matches / (double) left.size();
-    }
-
-    private double blendedSimilarity(double overlapScore, double nlpScore) {
-        if (nlpScore <= 0.0) {
-            return overlapScore;
-        }
-        return (overlapScore * 0.60) + (nlpScore * 0.40);
     }
 
     private double openNlpSimilarity(Set<String> normalizedQuestionTokens, String metadataText) {
@@ -462,27 +399,6 @@ public class AskDataLikeMetadataRetrievalService {
                 return true;
             }
         }
-        return false;
-    }
-
-    private boolean matchesUnderstandingRole(String semanticRole, QueryUnderstanding understanding) {
-        if (understanding == null || semanticRole == null || semanticRole.isBlank()) {
-            return false;
-        }
-
-        String role = semanticRole.toUpperCase(Locale.ROOT);
-        if (understanding.requiresAggregation()) {
-            if (role.contains("METRIC") || role.contains("MEASURE") || role.contains("AMOUNT") || role.contains("VALUE")) {
-                return true;
-            }
-        }
-
-        if (understanding.dimensions() != null && !understanding.dimensions().isEmpty()) {
-            if (role.contains("DIMENSION") || role.contains("ATTRIBUTE") || role.contains("DATE") || role.contains("TIME")) {
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -636,8 +552,7 @@ public class AskDataLikeMetadataRetrievalService {
             TableMeta table,
             double finalScore,
             double baseTableScore,
-            double baseColumnsScore,
-            double disambiguationBoost
+            double baseColumnsScore
     ) {
     }
 
