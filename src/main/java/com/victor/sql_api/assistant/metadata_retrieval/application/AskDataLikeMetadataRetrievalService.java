@@ -58,30 +58,8 @@ public class AskDataLikeMetadataRetrievalService {
         Map<String, List<ColumnMeta>> columnsByTable = allColumnsFromAllTables.stream()
                 .collect(Collectors.groupingBy(c -> tableKey(c.schemaName, c.tableName), LinkedHashMap::new, Collectors.toList()));
 
-        List<ScoredTable> selectedScoredTables = selectTables(
-                allTables,
-                columnsByTable,
-                questionProfile
-        );
-        List<TableMeta> selectedTablesMeta = selectedScoredTables.stream().map(st -> st.table).toList();
-        Map<String, Double> scoreByTableKey = selectedScoredTables.stream()
-                .collect(Collectors.toMap(
-                        st -> tableKey(st.table.schemaName, st.table.tableName),
-                        st -> st.finalScore,
-                        (left, right) -> left,
-                        LinkedHashMap::new
-                ));
-
-        Set<String> selectedTableKeys = selectedTablesMeta.stream()
-                .map(table -> tableKey(table.schemaName, table.tableName))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
-        List<ColumnMeta> columnsInSelectedTables = allColumnsFromAllTables.stream()
-                .filter(c -> selectedTableKeys.contains(tableKey(c.schemaName, c.tableName)))
-                .toList();
-
         List<ScoredColumn> selectedScoredColumns = selectColumns(
-                columnsInSelectedTables,
+                allColumnsFromAllTables,
                 questionProfile
         );
         List<ColumnMeta> selectedColumnsMeta = selectedScoredColumns.stream().map(sc -> sc.column).toList();
@@ -89,6 +67,27 @@ public class AskDataLikeMetadataRetrievalService {
                 .collect(Collectors.toMap(
                         sc -> columnKey(sc.column.schemaName, sc.column.tableName, sc.column.columnName),
                         sc -> sc.score,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        Set<String> selectedTableKeys = selectedColumnsMeta.stream()
+                .map(column -> tableKey(column.schemaName, column.tableName))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<ScoredTable> selectedScoredTables = selectTables(
+                allTables,
+                columnsByTable,
+                questionProfile
+        ).stream()
+                .filter(scored -> selectedTableKeys.contains(tableKey(scored.table.schemaName, scored.table.tableName)))
+                .toList();
+
+        List<TableMeta> selectedTablesMeta = selectedScoredTables.stream().map(st -> st.table).toList();
+        Map<String, Double> scoreByTableKey = selectedScoredTables.stream()
+                .collect(Collectors.toMap(
+                        st -> tableKey(st.table.schemaName, st.table.tableName),
+                        st -> st.finalScore,
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
@@ -164,7 +163,7 @@ public class AskDataLikeMetadataRetrievalService {
                 queryUnderstandingFallbackApplied,
                 queryUnderstandingFallbackReason,
                 allTables.size(),
-                columnsInSelectedTables.size(),
+                allColumnsFromAllTables.size(),
                 allRelationships.size(),
                 relevantTables.size(),
                 relevantColumns.size(),
