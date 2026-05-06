@@ -79,15 +79,15 @@ public class QueryUnderstandingRouter {
 
     private QueryUnderstandingDecision buildUnknownDecision(String reason) {
         QueryUnderstanding unknown = new QueryUnderstanding(
-                QueryIntent.UNKNOWN,
+                null,
                 null,
                 List.of(),
                 List.of(),
                 List.of(),
                 List.of(),
-                false,
-                false,
-                0.20
+                null,
+                null,
+                Double.NaN
         );
         return new QueryUnderstandingDecision(unknown, "none", true, reason);
     }

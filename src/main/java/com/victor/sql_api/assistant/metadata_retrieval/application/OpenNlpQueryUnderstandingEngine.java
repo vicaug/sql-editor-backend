@@ -11,15 +11,11 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
 import java.util.*;
-import java.util.regex.Pattern;
 
 @Service
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine {
-    private static final Pattern NLP_SAFE_CHARS = Pattern.compile("[^a-z0-9,;:.!?()\\- ]");
-    private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
     private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
     private final POSTaggerME posTagger;
 
@@ -42,26 +38,23 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         if (posTagger == null) {
             return unavailableUnderstanding(question);
         }
-        String nlpNormalized = normalizeForNlp(question);
-        List<String> tokenList = tokenize(nlpNormalized);
+        List<String> tokenList = tokenize(question);
         if (tokenList.isEmpty()) {
             return unavailableUnderstanding(question);
         }
 
         PosAnalysis posAnalysis = analyzePos(tokenList);
-        String[] tags = posAnalysis.tags();
-
-        LinkedHashSet<String> semanticTerms = extractSemanticTerms(tokenList, tags);
+        LinkedHashSet<String> semanticTerms = new LinkedHashSet<>(tokenList);
         LinkedHashSet<String> timeHints = new LinkedHashSet<>();
         LinkedHashSet<String> metrics = new LinkedHashSet<>();
         LinkedHashSet<String> dimensions = semanticTerms;
         LinkedHashSet<String> filters = new LinkedHashSet<>();
 
-        QueryIntent intent = QueryIntent.UNKNOWN;
-        boolean requiresAggregation = false;
-        boolean requiresJoin = !dimensions.isEmpty();
+        QueryIntent intent = null;
+        Boolean requiresAggregation = null;
+        Boolean requiresJoin = null;
 
-        double confidence = confidenceFromSignals(intent, posAnalysis);
+        double confidence = posAnalysis.averageProbability();
 
         return new QueryUnderstanding(
                 intent,
@@ -78,74 +71,24 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
 
     private QueryUnderstanding unavailableUnderstanding(String question) {
         return new QueryUnderstanding(
-                QueryIntent.UNKNOWN,
+                null,
                 null,
                 List.of(),
                 List.of(),
                 List.of(),
                 List.of(),
-                false,
-                false,
-                0.20
+                null,
+                null,
+                Double.NaN
         );
     }
 
-    private boolean isSemanticTag(String tag) {
-        if (tag == null || tag.isBlank()) return false;
-        String normalizedTag = tag.toUpperCase(Locale.ROOT);
-        return normalizedTag.contains("NOUN")
-                || normalizedTag.contains("PROPN")
-                || normalizedTag.contains("ADJ")
-                || normalizedTag.contains("NUM");
-    }
-
-    private LinkedHashSet<String> extractSemanticTerms(List<String> tokens, String[] tags) {
-        LinkedHashSet<String> terms = new LinkedHashSet<>();
-        for (int i = 0; i < tokens.size(); i++) {
-            String tag = i < tags.length ? tags[i] : "";
-            if (isSemanticTag(tag)) {
-                terms.add(tokens.get(i));
-            }
-        }
-        return terms;
-    }
-
-    private double confidenceFromSignals(
-            QueryIntent intent,
-            PosAnalysis posAnalysis
-    ) {
-        List<String> tokens = posAnalysis.tokens();
-        String[] tags = posAnalysis.tags();
-        if (tokens == null || tokens.isEmpty()) {
-            return 0.20;
-        }
-        int contentCount = 0;
-        for (String tag : tags) {
-            if (isSemanticTag(tag)) {
-                contentCount++;
-            }
-        }
-        double contentRatio = (double) contentCount / (double) tokens.size();
-        double avgTagConfidence = posAnalysis.averageProbability();
-        double confidence = intent == QueryIntent.UNKNOWN ? 0.30 : 0.55;
-        confidence += Math.min(0.20, contentRatio * 0.20);
-        confidence += Math.min(0.15, avgTagConfidence * 0.15);
-        return Math.max(0.0, Math.min(confidence, 0.92));
-    }
-
-    private String normalizeForNlp(String value) {
-        if (value == null) return "";
-        String noAccent = Normalizer.normalize(value.toLowerCase(Locale.ROOT), Normalizer.Form.NFD).replaceAll("\\p{M}", "");
-        String clean = NLP_SAFE_CHARS.matcher(noAccent).replaceAll(" ");
-        return MULTI_SPACE.matcher(clean).replaceAll(" ").trim();
-    }
-
-    private List<String> tokenize(String normalizedText) {
-        if (normalizedText == null || normalizedText.isBlank()) return List.of();
-        Span[] spans = tokenizer.tokenizePos(normalizedText);
+    private List<String> tokenize(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        Span[] spans = tokenizer.tokenizePos(text);
         List<String> tokens = new ArrayList<>(spans.length);
         for (Span span : spans) {
-            String token = normalizedText.substring(span.getStart(), span.getEnd()).trim();
+            String token = text.substring(span.getStart(), span.getEnd()).trim();
             if (!token.isBlank()) tokens.add(token);
         }
         return tokens;
@@ -169,4 +112,3 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     private record PosAnalysis(List<String> tokens, String[] tags, double averageProbability) {}
 
 }
-

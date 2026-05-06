@@ -9,8 +9,8 @@ public record QueryUnderstanding(
         List<String> dimensions,
         List<String> filters,
         List<String> timeHints,
-        boolean requiresAggregation,
-        boolean requiresJoin,
+        Boolean requiresAggregation,
+        Boolean requiresJoin,
         double confidence
 ) {
 }

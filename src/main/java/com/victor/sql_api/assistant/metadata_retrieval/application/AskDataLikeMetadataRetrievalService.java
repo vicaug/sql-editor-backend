@@ -1,6 +1,5 @@
 package com.victor.sql_api.assistant.metadata_retrieval.application;
 
-import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalConstraints;
 import com.victor.sql_api.assistant.metadata_retrieval.model.RetrievalRequest;
 import com.victor.sql_api.assistant.metadata.infrastructure.MetadataCatalogGateway;
 import com.victor.sql_api.assistant.metadata.model.context.*;
@@ -8,10 +7,10 @@ import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import opennlp.tools.postag.POSTaggerME;
 import opennlp.tools.tokenize.SimpleTokenizer;
+import opennlp.tools.util.Sequence;
 import opennlp.tools.util.Span;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -21,7 +20,6 @@ public class AskDataLikeMetadataRetrievalService {
      * Source of truth for retrieval:
      * this service queries eqt_metadata tables and ranks relevant tables/columns/relationships.
      */
-    private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
     private final MetadataCatalogGateway metadataCatalogGateway;
     private final POSTaggerME posTagger;
     private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
@@ -53,10 +51,9 @@ public class AskDataLikeMetadataRetrievalService {
             throw new BadRequestException("METADATA_QUESTION_EMPTY", "A pergunta para retrieval de metadata nao pode ser vazia.");
         }
 
-        RetrievalConstraints constraints = request.effectiveConstraints();
-
         List<TableMeta> allTables = fetchTables();
-        Set<String> questionTokens = extractSemanticTokens(request.question());
+        TokenProfile questionProfile = buildTokenProfile(request.question());
+        Set<String> questionTokens = questionProfile.tokens();
         List<ColumnMeta> allColumnsFromAllTables = fetchColumns(allTables);
         Map<String, List<ColumnMeta>> columnsByTable = allColumnsFromAllTables.stream()
                 .collect(Collectors.groupingBy(c -> tableKey(c.schemaName, c.tableName), LinkedHashMap::new, Collectors.toList()));
@@ -64,15 +61,13 @@ public class AskDataLikeMetadataRetrievalService {
         List<ScoredTable> selectedScoredTables = selectTables(
                 allTables,
                 columnsByTable,
-                questionTokens,
-                constraints.maxTables(),
-                constraints.minTableScoreThreshold()
+                questionProfile
         );
         List<TableMeta> selectedTablesMeta = selectedScoredTables.stream().map(st -> st.table).toList();
         Map<String, Double> scoreByTableKey = selectedScoredTables.stream()
                 .collect(Collectors.toMap(
                         st -> tableKey(st.table.schemaName, st.table.tableName),
-                        st -> clampScore(st.finalScore),
+                        st -> st.finalScore,
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
@@ -87,16 +82,13 @@ public class AskDataLikeMetadataRetrievalService {
 
         List<ScoredColumn> selectedScoredColumns = selectColumns(
                 columnsInSelectedTables,
-                questionTokens,
-                constraints.maxColumnsPerTable(),
-                constraints.maxTotalColumns(),
-                constraints.minColumnScoreThreshold()
+                questionProfile
         );
         List<ColumnMeta> selectedColumnsMeta = selectedScoredColumns.stream().map(sc -> sc.column).toList();
         Map<String, Double> scoreByColumnKey = selectedScoredColumns.stream()
                 .collect(Collectors.toMap(
                         sc -> columnKey(sc.column.schemaName, sc.column.tableName, sc.column.columnName),
-                        sc -> clampScore(sc.score),
+                        sc -> sc.score,
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
@@ -105,7 +97,7 @@ public class AskDataLikeMetadataRetrievalService {
         List<RelevantRelationship> selectedRelationships = selectRelationships(
                 allRelationships,
                 selectedColumnsMeta,
-                constraints.maxRelationships()
+                questionProfile
         );
 
         List<RelevantTable> relevantTables = selectedTablesMeta.stream()
@@ -120,7 +112,7 @@ public class AskDataLikeMetadataRetrievalService {
         List<RelevantColumn> relevantColumns = selectedScoredColumns.stream()
                 .map(scored -> {
                     ColumnMeta column = scored.column;
-                    double score = clampScore(scored.score);
+                    double score = scored.score;
                     return new RelevantColumn(
                             column.schemaName,
                             column.tableName,
@@ -137,14 +129,14 @@ public class AskDataLikeMetadataRetrievalService {
 
         List<RetrievalHint> hints = new ArrayList<>();
         if (!selectedRelationships.isEmpty()) {
-            hints.add(new RetrievalHint("RELATIONSHIP_HINT", "JOIN_PATH_AVAILABLE", 0.90));
+            hints.add(new RetrievalHint("RELATIONSHIP_HINT", "JOIN_PATH_AVAILABLE", selectedRelationships.get(0).confidence()));
         }
 
         List<String> tableDetails = selectedScoredTables.stream()
                 .map(scored -> {
                     String key = tableKey(scored.table.schemaName, scored.table.tableName);
                     return key
-                            + " | score=" + format(clampScore(scored.finalScore))
+                            + " | score=" + format(scored.finalScore)
                             + " | nlp_table=" + format(scored.baseTableScore)
                             + " | nlp_columns=" + format(scored.baseColumnsScore)
                             + " | reason=opennlp_similarity";
@@ -270,168 +262,134 @@ public class AskDataLikeMetadataRetrievalService {
 
     private List<ScoredColumn> selectColumns(
             List<ColumnMeta> allColumns,
-            Set<String> questionTokens,
-            int maxColumnsPerTable,
-            int maxTotalColumns,
-            double minColumnScoreThreshold
+            TokenProfile questionProfile
     ) {
         if (allColumns.isEmpty()) {
             return List.of();
         }
 
         List<ScoredColumn> ranked = allColumns.stream()
-                .map(column -> new ScoredColumn(column, scoreColumn(column, questionTokens)))
+                .map(column -> new ScoredColumn(column, scoreColumn(column, questionProfile)))
                 .sorted(Comparator.comparingDouble((ScoredColumn sc) -> sc.score).reversed())
                 .toList();
 
-        List<ScoredColumn> priority = ranked.stream()
-                .filter(scored -> scored.score >= minColumnScoreThreshold)
-                .toList();
-
-        if (priority.isEmpty()) {
-            priority = ranked;
-        }
-
-        int safePerTable = Math.max(0, maxColumnsPerTable);
-        int safeTotal = Math.max(0, maxTotalColumns);
-        Map<String, Integer> countByTable = new HashMap<>();
-        List<ScoredColumn> result = new ArrayList<>();
-
-        for (ScoredColumn scored : priority) {
-            if (safeTotal > 0 && result.size() >= safeTotal) {
-                break;
-            }
-            ColumnMeta column = scored.column;
-            String tableKey = tableKey(column.schemaName, column.tableName);
-            int tableCount = countByTable.getOrDefault(tableKey, 0);
-            if (safePerTable > 0 && tableCount >= safePerTable) {
-                continue;
-            }
-            result.add(scored);
-            countByTable.put(tableKey, tableCount + 1);
-        }
-
-        return result;
+        return ranked;
     }
 
     private List<ScoredTable> selectTables(
             List<TableMeta> allTables,
             Map<String, List<ColumnMeta>> columnsByTable,
-            Set<String> questionTokens,
-            int maxTables,
-            double minTableScoreThreshold
+            TokenProfile questionProfile
     ) {
-        int safeMaxTables = Math.max(0, maxTables);
-        if (safeMaxTables == 0 || allTables.isEmpty()) {
+        if (allTables.isEmpty()) {
             return List.of();
         }
 
-        List<ScoredTable> ranked = allTables.stream()
-                .map(table -> scoreTable(table, columnsByTable, questionTokens))
+        return allTables.stream()
+                .map(table -> scoreTable(table, columnsByTable, questionProfile))
                 .sorted(Comparator.comparingDouble((ScoredTable st) -> st.finalScore).reversed())
                 .toList();
-
-        List<ScoredTable> priority = ranked.stream()
-                .filter(scored -> scored.finalScore >= minTableScoreThreshold)
-                .toList();
-
-        if (priority.isEmpty()) {
-            priority = ranked;
-        } else {
-            int minimumRecall = Math.min(2, safeMaxTables);
-            if (priority.size() < minimumRecall) {
-                LinkedHashMap<String, ScoredTable> merged = new LinkedHashMap<>();
-                for (ScoredTable scored : priority) {
-                    merged.put(tableKey(scored.table.schemaName, scored.table.tableName), scored);
-                }
-                for (ScoredTable scored : ranked) {
-                    if (merged.size() >= minimumRecall) {
-                        break;
-                    }
-                    merged.putIfAbsent(tableKey(scored.table.schemaName, scored.table.tableName), scored);
-                }
-                priority = new ArrayList<>(merged.values());
-            }
-        }
-        return priority.stream().limit(safeMaxTables).toList();
     }
 
     private ScoredTable scoreTable(
             TableMeta table,
             Map<String, List<ColumnMeta>> columnsByTable,
-            Set<String> questionTokens
+            TokenProfile questionProfile
     ) {
         String tableTokensText = table.tableName + " " + defaultString(table.tableDescription);
-        double tableNlpScore = openNlpSimilarity(questionTokens, tableTokensText);
+        double tableNlpScore = openNlpSimilarity(questionProfile, tableTokensText);
         List<ColumnMeta> tableColumns = columnsByTable.getOrDefault(tableKey(table.schemaName, table.tableName), List.of());
         double columnsNlpScore = tableColumns.stream()
                 .mapToDouble(col -> {
                     String colText = col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole);
-                    return openNlpSimilarity(questionTokens, colText);
+                    return openNlpSimilarity(questionProfile, colText);
                 })
                 .max()
                 .orElse(0.0);
-        double finalScore = Math.max(tableNlpScore, columnsNlpScore);
+        String relationshipAwareTableText = tableTokensText + " " + tableColumns.stream()
+                .map(col -> col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole))
+                .collect(Collectors.joining(" "));
+        double finalScore = openNlpSimilarity(questionProfile, relationshipAwareTableText);
         return new ScoredTable(table, finalScore, tableNlpScore, columnsNlpScore);
     }
 
     private double scoreColumn(
             ColumnMeta column,
-            Set<String> questionTokens
+            TokenProfile questionProfile
     ) {
         String columnTokensText = column.columnName + " " + defaultString(column.columnComment) + " " + defaultString(column.semanticRole);
-        return openNlpSimilarity(questionTokens, columnTokensText);
+        return openNlpSimilarity(questionProfile, columnTokensText);
     }
 
-    private double cosineSimilarity(Set<String> left, Set<String> right) {
+    private double weightedCosineSimilarity(Map<String, Double> left, Map<String, Double> right) {
         if (left == null || right == null || left.isEmpty() || right.isEmpty()) {
             return 0.0;
         }
-        int matches = 0;
-        for (String token : left) {
-            if (right.contains(token)) {
-                matches++;
-            }
+        double dot = 0.0;
+        for (Map.Entry<String, Double> entry : left.entrySet()) {
+            double otherWeight = right.getOrDefault(entry.getKey(), 0.0);
+            dot += entry.getValue() * otherWeight;
         }
-        return matches / (Math.sqrt(left.size()) * Math.sqrt(right.size()));
-    }
-
-    private double openNlpSimilarity(Set<String> questionSemanticTokens, String metadataText) {
-        if (posTagger == null || questionSemanticTokens == null || questionSemanticTokens.isEmpty()) {
+        double normLeft = 0.0;
+        for (double weight : left.values()) {
+            normLeft += weight * weight;
+        }
+        double normRight = 0.0;
+        for (double weight : right.values()) {
+            normRight += weight * weight;
+        }
+        if (normLeft <= 0.0 || normRight <= 0.0) {
             return 0.0;
         }
-        Set<String> metadataContentTokens = extractSemanticTokens(metadataText);
-        return cosineSimilarity(questionSemanticTokens, metadataContentTokens);
+        return dot / (Math.sqrt(normLeft) * Math.sqrt(normRight));
     }
 
-    private Set<String> filterContentTokensWithPos(List<String> tokens) {
+    private double openNlpSimilarity(TokenProfile questionProfile, String metadataText) {
+        if (posTagger == null || questionProfile == null || questionProfile.weights().isEmpty()) {
+            return 0.0;
+        }
+        TokenProfile metadataProfile = buildTokenProfile(metadataText);
+        return weightedCosineSimilarity(questionProfile.weights(), metadataProfile.weights());
+    }
+
+    private TokenProfile buildTokenProfile(String rawText) {
+        if (rawText == null || rawText.isBlank() || posTagger == null) {
+            return new TokenProfile(Set.of(), Map.of());
+        }
+        String normalized = normalizeText(rawText);
+        List<String> tokens = tokenize(normalized);
+        return analyzeTokenProfile(tokens);
+    }
+
+    private TokenProfile analyzeTokenProfile(List<String> tokens) {
         if (tokens == null || tokens.isEmpty() || posTagger == null) {
-            return Set.of();
+            return new TokenProfile(Set.of(), Map.of());
         }
-        String[] tags = posTagger.tag(tokens.toArray(String[]::new));
-        LinkedHashSet<String> filtered = new LinkedHashSet<>();
+        Sequence[] sequences = posTagger.topKSequences(tokens.toArray(String[]::new));
+        if (sequences == null || sequences.length == 0) {
+            return new TokenProfile(Set.of(), Map.of());
+        }
+        Sequence best = sequences[0];
+        double[] probs = best.getProbs();
+        LinkedHashSet<String> tokenSet = new LinkedHashSet<>();
+        LinkedHashMap<String, Double> weights = new LinkedHashMap<>();
         for (int i = 0; i < tokens.size(); i++) {
-            String tag = tags[i] == null ? "" : tags[i].toUpperCase(Locale.ROOT);
-            if (containsAnyPosTag(tag)) {
-                filtered.add(tokens.get(i));
+            String token = tokens.get(i);
+            if (token == null || token.isBlank()) {
+                continue;
             }
+            double probability = (probs != null && i < probs.length) ? probs[i] : 0.0;
+            double weight = probability;
+            tokenSet.add(token);
+            weights.merge(token, weight, Double::sum);
         }
-        return filtered;
-    }
-
-    private boolean containsAnyPosTag(String tag) {
-        for (String contentTag : CONTENT_POS_TAGS) {
-            if (tag.contains(contentTag)) {
-                return true;
-            }
-        }
-        return false;
+        return new TokenProfile(tokenSet, weights);
     }
 
     private List<RelevantRelationship> selectRelationships(
             List<RelationshipMeta> relationships,
             List<ColumnMeta> selectedColumns,
-            int maxRelationships
+            TokenProfile questionProfile
     ) {
         if (relationships.isEmpty()) {
             return List.of();
@@ -443,9 +401,10 @@ public class AskDataLikeMetadataRetrievalService {
 
         List<RelevantRelationship> prioritized = new ArrayList<>();
         for (RelationshipMeta rel : relationships) {
-            String from = columnKey(rel.fromSchema, rel.fromTable, rel.fromColumn);
-            String to = columnKey(rel.toSchema, rel.toTable, rel.toColumn);
-            double confidence = (selectedColumnKeys.contains(from) || selectedColumnKeys.contains(to)) ? 0.90 : 0.75;
+            String relationText = rel.fromSchema + " " + rel.fromTable + " " + rel.fromColumn + " "
+                    + rel.toSchema + " " + rel.toTable + " " + rel.toColumn + " "
+                    + defaultString(rel.relationshipType);
+            double confidence = openNlpSimilarity(questionProfile, relationText);
             prioritized.add(new RelevantRelationship(
                     rel.fromSchema,
                     rel.fromTable,
@@ -458,12 +417,9 @@ public class AskDataLikeMetadataRetrievalService {
             ));
         }
 
-        int safeMax = Math.max(0, maxRelationships);
-        if (safeMax == 0) {
-            return List.of();
-        }
-
-        return prioritized.stream().limit(safeMax).toList();
+        return prioritized.stream()
+                .sorted(Comparator.comparingDouble(RelevantRelationship::confidence).reversed())
+                .toList();
     }
 
     private String buildTableFilter(String schemaColumn, String tableColumn, List<TableMeta> tables, List<Object> params) {
@@ -503,9 +459,7 @@ public class AskDataLikeMetadataRetrievalService {
         if (value == null) {
             return "";
         }
-        String noAccent = Normalizer.normalize(value.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "");
-        return noAccent.replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim();
+        return value.toLowerCase(Locale.ROOT).trim();
     }
 
     private List<String> tokenize(String normalized) {
@@ -517,15 +471,6 @@ public class AskDataLikeMetadataRetrievalService {
             if (!token.isBlank()) tokens.add(token);
         }
         return tokens;
-    }
-
-    private Set<String> extractSemanticTokens(String rawText) {
-        if (rawText == null || rawText.isBlank()) {
-            return Set.of();
-        }
-        String normalized = normalizeText(rawText);
-        List<String> tokens = tokenize(normalized);
-        return filterContentTokensWithPos(tokens);
     }
 
     private String defaultString(String value) {
@@ -576,10 +521,6 @@ public class AskDataLikeMetadataRetrievalService {
         return String.format(Locale.ROOT, "%.3f", value);
     }
 
-    private double clampScore(double value) {
-        return Math.max(0.0, Math.min(1.0, value));
-    }
-
     private record TableMeta(String schemaName, String tableName, String tableDescription) {
     }
 
@@ -615,6 +556,9 @@ public class AskDataLikeMetadataRetrievalService {
             String toColumn,
             String relationshipType
     ) {
+    }
+
+    private record TokenProfile(Set<String> tokens, Map<String, Double> weights) {
     }
 }
 
