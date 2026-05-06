@@ -7,6 +7,8 @@ import com.victor.sql_api.assistant.metadata.model.context.*;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
 import opennlp.tools.postag.POSTaggerME;
+import opennlp.tools.tokenize.SimpleTokenizer;
+import opennlp.tools.util.Span;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -19,13 +21,10 @@ public class AskDataLikeMetadataRetrievalService {
      * Source of truth for retrieval:
      * this service queries eqt_metadata tables and ranks relevant tables/columns/relationships.
      */
-    private static final Set<String> STOPWORDS = Set.of(
-            "a", "o", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "para", "por", "com",
-            "um", "uma", "meu", "minha", "gere", "trazer", "calcule", "tambem", "quero", "que", "mostre"
-    );
     private static final Set<String> CONTENT_POS_TAGS = Set.of("NOUN", "PROPN", "ADJ", "NUM", "VERB");
     private final MetadataCatalogGateway metadataCatalogGateway;
     private final POSTaggerME posTagger;
+    private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
 
     public AskDataLikeMetadataRetrievalService(
             MetadataCatalogGateway metadataCatalogGateway,
@@ -57,7 +56,7 @@ public class AskDataLikeMetadataRetrievalService {
         RetrievalConstraints constraints = request.effectiveConstraints();
 
         List<TableMeta> allTables = fetchTables();
-        Set<String> questionTokens = tokenize(normalizeText(request.question()));
+        Set<String> questionTokens = extractSemanticTokens(request.question());
         List<ColumnMeta> allColumnsFromAllTables = fetchColumns(allTables);
         Map<String, List<ColumnMeta>> columnsByTable = allColumnsFromAllTables.stream()
                 .collect(Collectors.groupingBy(c -> tableKey(c.schemaName, c.tableName), LinkedHashMap::new, Collectors.toList()));
@@ -333,12 +332,12 @@ public class AskDataLikeMetadataRetrievalService {
             Map<String, List<ColumnMeta>> columnsByTable,
             Set<String> questionTokens
     ) {
-        String tableTokensText = normalizeText(table.tableName + " " + defaultString(table.tableDescription));
+        String tableTokensText = table.tableName + " " + defaultString(table.tableDescription);
         double tableNlpScore = openNlpSimilarity(questionTokens, tableTokensText);
         List<ColumnMeta> tableColumns = columnsByTable.getOrDefault(tableKey(table.schemaName, table.tableName), List.of());
         double columnsNlpScore = tableColumns.stream()
                 .mapToDouble(col -> {
-                    String colText = normalizeText(col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole));
+                    String colText = col.columnName + " " + defaultString(col.columnComment) + " " + defaultString(col.semanticRole);
                     return openNlpSimilarity(questionTokens, colText);
                 })
                 .max()
@@ -351,11 +350,11 @@ public class AskDataLikeMetadataRetrievalService {
             ColumnMeta column,
             Set<String> questionTokens
     ) {
-        String columnTokensText = normalizeText(column.columnName + " " + defaultString(column.columnComment) + " " + defaultString(column.semanticRole));
+        String columnTokensText = column.columnName + " " + defaultString(column.columnComment) + " " + defaultString(column.semanticRole);
         return openNlpSimilarity(questionTokens, columnTokensText);
     }
 
-    private double overlapScore(Set<String> left, Set<String> right) {
+    private double cosineSimilarity(Set<String> left, Set<String> right) {
         if (left == null || right == null || left.isEmpty() || right.isEmpty()) {
             return 0.0;
         }
@@ -365,29 +364,27 @@ public class AskDataLikeMetadataRetrievalService {
                 matches++;
             }
         }
-        return (double) matches / (double) left.size();
+        return matches / (Math.sqrt(left.size()) * Math.sqrt(right.size()));
     }
 
-    private double openNlpSimilarity(Set<String> normalizedQuestionTokens, String metadataText) {
-        if (posTagger == null || normalizedQuestionTokens == null || normalizedQuestionTokens.isEmpty()) {
+    private double openNlpSimilarity(Set<String> questionSemanticTokens, String metadataText) {
+        if (posTagger == null || questionSemanticTokens == null || questionSemanticTokens.isEmpty()) {
             return 0.0;
         }
-        Set<String> questionContentTokens = filterContentTokensWithPos(normalizedQuestionTokens);
-        Set<String> metadataContentTokens = filterContentTokensWithPos(tokenize(metadataText));
-        return overlapScore(questionContentTokens, metadataContentTokens);
+        Set<String> metadataContentTokens = extractSemanticTokens(metadataText);
+        return cosineSimilarity(questionSemanticTokens, metadataContentTokens);
     }
 
-    private Set<String> filterContentTokensWithPos(Set<String> tokens) {
+    private Set<String> filterContentTokensWithPos(List<String> tokens) {
         if (tokens == null || tokens.isEmpty() || posTagger == null) {
             return Set.of();
         }
-        List<String> tokenList = new ArrayList<>(tokens);
-        String[] tags = posTagger.tag(tokenList.toArray(String[]::new));
+        String[] tags = posTagger.tag(tokens.toArray(String[]::new));
         LinkedHashSet<String> filtered = new LinkedHashSet<>();
-        for (int i = 0; i < tokenList.size(); i++) {
+        for (int i = 0; i < tokens.size(); i++) {
             String tag = tags[i] == null ? "" : tags[i].toUpperCase(Locale.ROOT);
             if (containsAnyPosTag(tag)) {
-                filtered.add(tokenList.get(i));
+                filtered.add(tokens.get(i));
             }
         }
         return filtered;
@@ -482,15 +479,24 @@ public class AskDataLikeMetadataRetrievalService {
         return noAccent.replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim();
     }
 
-    private Set<String> tokenize(String normalized) {
-        if (normalized == null || normalized.isBlank()) {
+    private List<String> tokenize(String normalized) {
+        if (normalized == null || normalized.isBlank()) return List.of();
+        Span[] spans = tokenizer.tokenizePos(normalized);
+        List<String> tokens = new ArrayList<>(spans.length);
+        for (Span span : spans) {
+            String token = normalized.substring(span.getStart(), span.getEnd()).trim();
+            if (!token.isBlank()) tokens.add(token);
+        }
+        return tokens;
+    }
+
+    private Set<String> extractSemanticTokens(String rawText) {
+        if (rawText == null || rawText.isBlank()) {
             return Set.of();
         }
-        return Arrays.stream(normalized.split(" "))
-                .filter(token -> !token.isBlank())
-                .filter(token -> token.length() > 1)
-                .filter(token -> !STOPWORDS.contains(token))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        String normalized = normalizeText(rawText);
+        List<String> tokens = tokenize(normalized);
+        return filterContentTokensWithPos(tokens);
     }
 
     private String defaultString(String value) {
