@@ -36,7 +36,7 @@ public record RetrievalConstraints(
             20,
             12,
             24,
-            0.20,
+            0.05,
             0.05
         );
     }

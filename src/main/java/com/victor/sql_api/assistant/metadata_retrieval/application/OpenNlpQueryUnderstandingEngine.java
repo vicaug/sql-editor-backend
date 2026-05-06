@@ -2,7 +2,6 @@ package com.victor.sql_api.assistant.metadata_retrieval.application;
 
 import com.victor.sql_api.assistant.nl2sql.model.QueryIntent;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
-import opennlp.tools.doccat.DocumentCategorizerME;
 import opennlp.tools.postag.POSTaggerME;
 import opennlp.tools.tokenize.SimpleTokenizer;
 import opennlp.tools.util.Sequence;
@@ -23,14 +22,9 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
     private static final Pattern MULTI_SPACE = Pattern.compile("\\s+");
     private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
     private final POSTaggerME posTagger;
-    private final DocumentCategorizerME intentCategorizer;
 
-    public OpenNlpQueryUnderstandingEngine(
-            OpenNlpPosTaggerProvider posTaggerProvider,
-            OpenNlpIntentCategorizerProvider intentCategorizerProvider
-    ) {
+    public OpenNlpQueryUnderstandingEngine(OpenNlpPosTaggerProvider posTaggerProvider) {
         this.posTagger = posTaggerProvider.getPosTagger();
-        this.intentCategorizer = intentCategorizerProvider.getCategorizer();
     }
 
     @Override
@@ -40,12 +34,12 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
 
     @Override
     public boolean isAvailable() {
-        return posTagger != null && intentCategorizer != null;
+        return posTagger != null;
     }
 
     @Override
     public QueryUnderstanding analyze(String question) {
-        if (posTagger == null || intentCategorizer == null) {
+        if (posTagger == null) {
             return unavailableUnderstanding(question);
         }
         String nlpNormalized = normalizeForNlp(question);
@@ -63,12 +57,11 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         LinkedHashSet<String> dimensions = semanticTerms;
         LinkedHashSet<String> filters = new LinkedHashSet<>();
 
-        IntentDecision intentDecision = classifyIntent(tokenList);
-        QueryIntent intent = intentDecision.intent();
-        boolean requiresAggregation = intent == QueryIntent.AGGREGATION || intent == QueryIntent.TREND;
-        boolean requiresJoin = intent == QueryIntent.DETAIL || intent == QueryIntent.COMPARISON || intent == QueryIntent.TREND;
+        QueryIntent intent = QueryIntent.UNKNOWN;
+        boolean requiresAggregation = false;
+        boolean requiresJoin = !dimensions.isEmpty();
 
-        double confidence = confidenceFromSignals(intent, intentDecision.probability(), posAnalysis);
+        double confidence = confidenceFromSignals(intent, posAnalysis);
 
         return new QueryUnderstanding(
                 intent,
@@ -119,7 +112,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
 
     private double confidenceFromSignals(
             QueryIntent intent,
-            double intentProbability,
             PosAnalysis posAnalysis
     ) {
         List<String> tokens = posAnalysis.tokens();
@@ -136,7 +128,6 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         double contentRatio = (double) contentCount / (double) tokens.size();
         double avgTagConfidence = posAnalysis.averageProbability();
         double confidence = intent == QueryIntent.UNKNOWN ? 0.30 : 0.55;
-        confidence += Math.min(0.20, intentProbability * 0.20);
         confidence += Math.min(0.20, contentRatio * 0.20);
         confidence += Math.min(0.15, avgTagConfidence * 0.15);
         return Math.max(0.0, Math.min(confidence, 0.92));
@@ -175,33 +166,7 @@ public class OpenNlpQueryUnderstandingEngine implements QueryUnderstandingEngine
         return new PosAnalysis(tokenList, tags, avgProbability);
     }
 
-    private IntentDecision classifyIntent(List<String> tokenList) {
-        double[] outcomes = intentCategorizer.categorize(tokenList.toArray(String[]::new));
-        String bestCategory = intentCategorizer.getBestCategory(outcomes);
-        double probability = 0.0;
-        if (outcomes != null && outcomes.length > 0) {
-            int bestIndex = intentCategorizer.getIndex(bestCategory);
-            if (bestIndex >= 0 && bestIndex < outcomes.length) {
-                probability = outcomes[bestIndex];
-            }
-        }
-        return new IntentDecision(toQueryIntent(bestCategory), probability);
-    }
-
-    private QueryIntent toQueryIntent(String category) {
-        if (category == null || category.isBlank()) {
-            return QueryIntent.UNKNOWN;
-        }
-        try {
-            return QueryIntent.valueOf(category.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            return QueryIntent.UNKNOWN;
-        }
-    }
-
-    private record IntentDecision(QueryIntent intent, double probability) {}
     private record PosAnalysis(List<String> tokens, String[] tags, double averageProbability) {}
 
 }
-
 

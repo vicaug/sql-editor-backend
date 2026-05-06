@@ -7,6 +7,8 @@ import com.victor.sql_api.assistant.metadata.model.context.RelevantTable;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 @Component
@@ -23,13 +25,13 @@ public class PromptContextBuilder {
         b.append("filters: ").append(understanding == null ? "[]" : understanding.filters()).append("\n\n");
 
         b.append("ALLOWED_TABLES:\n");
-        for (RelevantTable t : metadataContext.tables()) {
+        for (RelevantTable t : safeList(metadataContext == null ? null : metadataContext.tables())) {
             b.append("- ").append(t.schemaName()).append(".").append(t.tableName()).append(": ")
                     .append(orEmpty(t.businessDescription())).append("\n");
         }
 
         b.append("\nALLOWED_COLUMNS:\n");
-        for (RelevantColumn c : metadataContext.columns()) {
+        for (RelevantColumn c : safeList(metadataContext == null ? null : metadataContext.columns())) {
             b.append("- ").append(c.schemaName()).append(".").append(c.tableName()).append(".").append(c.columnName())
                     .append(" (").append(defaultType(c.dataType())).append("): ")
                     .append(orEmpty(c.description()));
@@ -40,18 +42,12 @@ public class PromptContextBuilder {
         }
 
         b.append("\nRELATIONSHIPS:\n");
-        for (RelevantRelationship r : metadataContext.relationships()) {
+        for (RelevantRelationship r : safeList(metadataContext == null ? null : metadataContext.relationships())) {
             b.append("- ").append(r.fromSchema()).append(".").append(r.fromTable()).append(".").append(r.fromColumn())
                     .append(" -> ")
                     .append(r.toSchema()).append(".").append(r.toTable()).append(".").append(r.toColumn())
                     .append("\n");
         }
-
-        b.append("\nINSTRUCTIONS:\n");
-        b.append("- Generate only SELECT SQL.\n");
-        b.append("- Use only allowed tables and columns.\n");
-        b.append("- Do not invent columns.\n");
-        b.append("- Prefer explicit joins from RELATIONSHIPS.\n");
 
         return b.toString();
     }
@@ -62,6 +58,10 @@ public class PromptContextBuilder {
 
     private String defaultType(String value) {
         return value == null || value.isBlank() ? "unknown" : value.toLowerCase(Locale.ROOT);
+    }
+
+    private <T> List<T> safeList(List<T> value) {
+        return value == null ? Collections.emptyList() : value;
     }
 }
 

@@ -279,11 +279,18 @@ public class AskDataLikeMetadataRetrievalService {
             return List.of();
         }
 
-        List<ScoredColumn> priority = allColumns.stream()
+        List<ScoredColumn> ranked = allColumns.stream()
                 .map(column -> new ScoredColumn(column, scoreColumn(column, questionTokens)))
-                .filter(scored -> scored.score >= minColumnScoreThreshold)
                 .sorted(Comparator.comparingDouble((ScoredColumn sc) -> sc.score).reversed())
                 .toList();
+
+        List<ScoredColumn> priority = ranked.stream()
+                .filter(scored -> scored.score >= minColumnScoreThreshold)
+                .toList();
+
+        if (priority.isEmpty()) {
+            priority = ranked;
+        }
 
         int safePerTable = Math.max(0, maxColumnsPerTable);
         int safeTotal = Math.max(0, maxTotalColumns);
@@ -319,12 +326,34 @@ public class AskDataLikeMetadataRetrievalService {
             return List.of();
         }
 
-        return allTables.stream()
+        List<ScoredTable> ranked = allTables.stream()
                 .map(table -> scoreTable(table, columnsByTable, questionTokens))
-                .filter(scored -> scored.finalScore >= minTableScoreThreshold)
                 .sorted(Comparator.comparingDouble((ScoredTable st) -> st.finalScore).reversed())
-                .limit(safeMaxTables)
                 .toList();
+
+        List<ScoredTable> priority = ranked.stream()
+                .filter(scored -> scored.finalScore >= minTableScoreThreshold)
+                .toList();
+
+        if (priority.isEmpty()) {
+            priority = ranked;
+        } else {
+            int minimumRecall = Math.min(2, safeMaxTables);
+            if (priority.size() < minimumRecall) {
+                LinkedHashMap<String, ScoredTable> merged = new LinkedHashMap<>();
+                for (ScoredTable scored : priority) {
+                    merged.put(tableKey(scored.table.schemaName, scored.table.tableName), scored);
+                }
+                for (ScoredTable scored : ranked) {
+                    if (merged.size() >= minimumRecall) {
+                        break;
+                    }
+                    merged.putIfAbsent(tableKey(scored.table.schemaName, scored.table.tableName), scored);
+                }
+                priority = new ArrayList<>(merged.values());
+            }
+        }
+        return priority.stream().limit(safeMaxTables).toList();
     }
 
     private ScoredTable scoreTable(
