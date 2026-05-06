@@ -394,10 +394,6 @@ public class AskDataLikeMetadataRetrievalService {
             return List.of();
         }
 
-        Set<String> selectedColumnKeys = selectedColumns.stream()
-                .map(column -> columnKey(column.schemaName, column.tableName, column.columnName))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-
         List<RelevantRelationship> prioritized = new ArrayList<>();
         for (RelationshipMeta rel : relationships) {
             String relationText = rel.fromSchema + " " + rel.fromTable + " " + rel.fromColumn + " "
