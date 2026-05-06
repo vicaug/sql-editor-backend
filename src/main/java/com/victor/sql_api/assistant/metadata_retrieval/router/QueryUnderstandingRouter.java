@@ -1,7 +1,6 @@
 package com.victor.sql_api.assistant.metadata_retrieval.router;
 
 import com.victor.sql_api.assistant.metadata_retrieval.application.QueryUnderstandingEngine;
-import com.victor.sql_api.assistant.nl2sql.model.QueryIntent;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstandingDecision;
 import com.victor.sql_api.assistant.nl2sql.model.QueryUnderstanding;
 import com.victor.sql_api.shared.exception.BadRequestException;
